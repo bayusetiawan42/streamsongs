@@ -351,12 +351,33 @@ export class AudioEngine {
           );
         });
       } else {
-        // Downbeat impact: heavy kick punch + sub-impact
+        // Downbeat impact: heavy kick punch + sub-impact, flavored per drop style
+        const style = bridge.style;
         if (!this.samplers.playTr808Drum('kick', t, 1.0)) {
           this.voices.playKick(t, 1.0, D.dry);
         }
-        if (D.tr.stId === 'phonk') {
+        if (D.tr.stId === 'phonk' || style === 'phonk-stutter') {
           this.samplers.playTr808Drum('clap', t, 0.9);
+        }
+        if (style === 'phonk-stutter' || style === 'impact-silence') {
+          // Delayed echo punch — the drop keeps breathing after the first hit
+          const echo = t + sd * 2;
+          if (!this.samplers.playTr808Drum('kick', echo, 0.8)) {
+            this.voices.playKick(echo, 0.8, D.dry);
+          }
+        }
+        if (style === 'arcade-warp') {
+          // Rising hat splash sweep out of the warp slide
+          for (let h = 1; h <= 3; h++) {
+            this.voices.playNoiseHit(t + sd * h, 0.05, 0.12, 'highpass', 6000 + h * 1600, D.dry);
+          }
+        }
+        if (style === 'arcade-fanfare') {
+          // High coin-blip flourish over the drop
+          const blip = D.tr.root + 24;
+          if (!this.samplers.playRhodes(blip, t + sd, sd * 2, 0.7)) {
+            this.voices.playMelodicNote('chiptune', m2f(blip), t + sd, sd * 2, 0.7, D.tr.cut, D.wet, D.dry);
+          }
         }
       }
     }
@@ -366,6 +387,18 @@ export class AudioEngine {
     if (isBridging && bridge && bridge.mode !== 'morph') {
       const bridgeStep = (s - bridge.barStart * 16) % 16;
       const activeInst = this.prefInstrument !== 'auto' ? this.prefInstrument : D.tr.instrument;
+      const isLastBridgeBar = bar === bridge.barStart + bridge.barsTotal - 1;
+
+      // Stutter-drop variant: gated accelerating kicks replace the riser tail
+      if (bridge.mode === 'drop' && bridge.style === 'phonk-stutter' && isLastBridgeBar && bridgeStep >= 12) {
+        const kickV = 0.35 + (bridgeStep - 12) * 0.18;
+        if (!this.samplers.playTr808Drum('kick', t, kickV)) {
+          this.voices.playKick(t, kickV, D.dry);
+        }
+        return;
+      }
+      // Silence-gap variant: everything voids except the opening thud
+      const voidGap = bridge.mode === 'drop' && bridge.style === 'impact-silence';
 
       // A. Bridge Chords (Pivot / Secondary Dominant) on step 0 of bridge — skipped on hard drops
       if (bridgeStep === 0 && bridge.mode !== 'drop') {
@@ -431,21 +464,23 @@ export class AudioEngine {
       }
 
       // D. Bridge Drum Riser & Pre-Drop Choke
-      const fill = getDrumFillStep(D.tr.dr, bridgeStep, D.tr.stId);
-      if (!fill.isChoke) {
-        if (fill.kick) {
-          if (!this.samplers.playTr808Drum('kick', t, fill.kickVol)) {
-            this.voices.playKick(t, fill.kickVol, D.dry);
+      if (!voidGap) {
+        const fill = getDrumFillStep(D.tr.dr, bridgeStep, D.tr.stId);
+        if (!fill.isChoke) {
+          if (fill.kick) {
+            if (!this.samplers.playTr808Drum('kick', t, fill.kickVol)) {
+              this.voices.playKick(t, fill.kickVol, D.dry);
+            }
           }
-        }
-        if (fill.snare) {
-          if (!this.samplers.playTr808Drum('snare', t, fill.snareVol)) {
-            this.voices.playNoiseHit(t, 0.16, fill.snareVol * 0.45, 'bandpass', 1900, D.dry);
+          if (fill.snare) {
+            if (!this.samplers.playTr808Drum('snare', t, fill.snareVol)) {
+              this.voices.playNoiseHit(t, 0.16, fill.snareVol * 0.45, 'bandpass', 1900, D.dry);
+            }
           }
-        }
-        if (fill.hihat) {
-          if (!this.samplers.playTr808Drum('hihat', t, fill.hihatVol)) {
-            this.voices.playNoiseHit(t, 0.035, fill.hihatVol * 0.12, 'highpass', 7600, D.dry);
+          if (fill.hihat) {
+            if (!this.samplers.playTr808Drum('hihat', t, fill.hihatVol)) {
+              this.voices.playNoiseHit(t, 0.035, fill.hihatVol * 0.12, 'highpass', 7600, D.dry);
+            }
           }
         }
       }
@@ -775,7 +810,7 @@ export class AudioEngine {
     }
 
     const activeInst = this.prefInstrument !== 'auto' ? this.prefInstrument : D.tr.instrument;
-    const melodicFiller = generateMelodicFiller(D.tr.stId, activeInst, D.tr.root, targetRoot, targetScale, plan.mode);
+    const melodicFiller = generateMelodicFiller(D.tr.stId, activeInst, D.tr.root, targetRoot, targetScale, plan.mode, plan.style);
 
     D.bridge = {
       barStart,
@@ -790,7 +825,7 @@ export class AudioEngine {
       targetKey,
       reason: opts.reason
     };
-    this.transitionHistory.push({ stationId: D.tr.stId, mode: plan.mode });
+    this.transitionHistory.push({ stationId: D.tr.stId, mode: plan.mode, style: plan.style });
     if (this.transitionHistory.length > 8) this.transitionHistory.shift();
     return plan;
   }

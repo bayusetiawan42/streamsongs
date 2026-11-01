@@ -12,7 +12,8 @@ export function generateMelodicFiller(
   fromRoot: number,
   toRoot: number,
   targetScale: number[],
-  mode: 'drop' | 'bridge' | 'morph' = 'bridge'
+  mode: 'drop' | 'bridge' | 'morph' = 'bridge',
+  style?: string
 ): (number | null)[] {
   const filler: (number | null)[] = new Array(16).fill(null);
 
@@ -23,6 +24,41 @@ export function generateMelodicFiller(
     filler[4] = toRoot + targetScale[2 % targetScale.length] + 12;
     filler[8] = toRoot + targetScale[4 % targetScale.length];
     filler[12] = toRoot + 7;
+    return filler;
+  }
+
+  if (mode === 'drop' && style === 'impact-silence') {
+    // Silence-gap: one lone sub thud, then a void right before the drop
+    filler[0] = toRoot - 12;
+    return filler;
+  }
+
+  if (mode === 'drop' && style === 'phonk-stutter') {
+    // Gated cowbell stutter pulse on root/fifth, exploding into a 16th climb
+    [0, 2, 4, 6, 8, 10].forEach(s => { filler[s] = s % 4 === 0 ? toRoot : toRoot + 7; });
+    [12, 13, 14, 15].forEach((s, i) => { filler[s] = toRoot + [0, 3, 5, 7][i]; });
+    return filler;
+  }
+
+  if (mode === 'drop' && style === 'arcade-warp') {
+    // Mario-pipe chromatic warp slide falling from the old key into the new one
+    for (let s = 0; s < 16; s++) {
+      filler[s] = fromRoot + 24 - s;
+    }
+    filler[15] = toRoot; // locked landing on the target root
+    return filler;
+  }
+
+  if (mode === 'drop' && style === 'arcade-fanfare') {
+    // Triple-fanfare "da-da-da-DAAA": motif punch then high octaves
+    filler[0] = toRoot;
+    filler[2] = toRoot;
+    filler[4] = toRoot + 7;
+    filler[6] = toRoot;
+    filler[8] = toRoot + 12;
+    filler[10] = toRoot + 12;
+    filler[12] = toRoot + targetScale[4 % targetScale.length] + 12;
+    filler[14] = toRoot + 19;
     return filler;
   }
 

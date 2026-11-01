@@ -5,8 +5,12 @@ export type TransitionMode = 'drop' | 'bridge' | 'morph';
 
 export type TransitionStyle =
   | 'phonk-choke'
+  | 'phonk-stutter'
   | 'arcade-blip'
+  | 'arcade-warp'
+  | 'arcade-fanfare'
   | 'impact-drop'
+  | 'impact-silence'
   | 'cinematic-drive'
   | 'cinematic-upbeat'
   | 'generic-bridge'
@@ -48,6 +52,7 @@ export interface TransitionPlan {
 export interface TransitionHistoryEntry {
   stationId: string;
   mode: TransitionMode;
+  style?: TransitionStyle;
 }
 
 export interface StrategyOptions {
@@ -105,6 +110,42 @@ function modeStreak(history: TransitionHistoryEntry[], stationId: string, mode: 
   return n;
 }
 
+/** How many times back-to-back this station played the exact same style. */
+function styleStreak(history: TransitionHistoryEntry[], stationId: string, style: TransitionStyle): number {
+  let n = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const h = history[i];
+    if (h.stationId !== stationId) continue;
+    if (h.style === style) n++;
+    else break;
+  }
+  return n;
+}
+
+/**
+ * Drop variants per station — a drop is never the same card twice in a row:
+ *   phonk : classic choke / gated stutter build / silence-gap void
+ *   arcade: chip blip run / pipe warp slide / triple-fanfare landing
+ *   others: rising stinger / silence-gap
+ */
+const DROP_VARIANTS: Record<string, TransitionStyle[]> = {
+  phonk: ['phonk-choke', 'phonk-stutter', 'impact-silence'],
+  arcade: ['arcade-blip', 'arcade-warp', 'arcade-fanfare'],
+  other: ['impact-drop', 'impact-silence'],
+};
+
+function pickDropStyle(stationId: string, rng: () => number, history: TransitionHistoryEntry[]): TransitionStyle {
+  const list = DROP_VARIANTS[stationId] ?? DROP_VARIANTS.other;
+  let lastStyle: TransitionStyle | undefined;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].stationId === stationId) { lastStyle = history[i].style; break; }
+  }
+  const pool = lastStyle && styleStreak(history, stationId, lastStyle) >= 2
+    ? list.filter(s => s !== lastStyle)
+    : list;
+  return pool[Math.floor(rng() * pool.length)];
+}
+
 function weightedMode(
   w: { drop: number; bridge: number; morph: number },
   fallback: TransitionMode,
@@ -120,12 +161,6 @@ function weightedMode(
   x -= m;
   if (x < b) return 'bridge';
   return 'drop';
-}
-
-function pickDropStyle(stationId: string): TransitionStyle {
-  if (stationId === 'phonk') return 'phonk-choke';
-  if (stationId === 'arcade') return 'arcade-blip';
-  return 'impact-drop';
 }
 
 function pickBridgeStyle(stationId: string, rng: () => number): TransitionStyle {
@@ -179,8 +214,10 @@ function dropPlan(
   // Rotating choke: after a run of identical 1-bar drops, occasionally stretch to 2
   if (bars === 1 && modeStreak(history, ctx.stationId, 'drop') >= 3 && rng() < 0.45 && ctx.barsRemaining >= 2) {
     bars = 2;
+  } else if (bars === 2 && rng() < 0.12 && ctx.barsRemaining >= 3) {
+    bars = 3; // long-fuse choke
   }
-  return { mode: 'drop', bars, style: pickDropStyle(ctx.stationId), rampBpm };
+  return { mode: 'drop', bars, style: pickDropStyle(ctx.stationId, rng, history), rampBpm };
 }
 
 /**
