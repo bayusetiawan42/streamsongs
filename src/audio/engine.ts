@@ -1,6 +1,7 @@
 import { Track, Deck, Station, WeatherCategory, InstrumentId, PeriodName } from '../types';
 import { VoiceManager } from './synths/voices';
 import { AmbientEngine } from './ambient';
+import { SamplerManager } from './sampler/samplerManager';
 import { generateTrack, STATIONS } from './theory/generator';
 import { m2f, NOTE_NAMES } from './theory/scales';
 
@@ -15,11 +16,15 @@ export class AudioEngine {
   public dryBus!: GainNode;
 
   public voices!: VoiceManager;
+  public samplers!: SamplerManager;
   public ambient!: AmbientEngine;
 
   public playing = false;
   private started = false;
-  private timer: number | null = null;
+  /** Look-ahead scheduler: uses setTimeout instead of setInterval to avoid drift */
+  private schedTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly LOOKAHEAD = 0.12;   // seconds to schedule ahead
+  private readonly SCHED_INTERVAL = 25; // ms between scheduler wakeups
   private decks: Deck[] = [];
 
   // Current track & state
@@ -63,14 +68,14 @@ export class AudioEngine {
     this.analyser.smoothingTimeConstant = 0.82;
     this.analyserData = new Uint8Array(this.analyser.frequencyBinCount);
 
-    // Convolver Reverb with impulse buffer
+    // Convolver Reverb with impulse buffer — 1.6s tail (reduced from 3.2s for CPU savings)
     this.verb = this.ctx.createConvolver();
-    const len = this.ctx.sampleRate * 3.2;
+    const len = Math.floor(this.ctx.sampleRate * 1.6);
     const impulse = this.ctx.createBuffer(2, len, this.ctx.sampleRate);
     for (let c = 0; c < 2; c++) {
       const d = impulse.getChannelData(c);
       for (let i = 0; i < len; i++) {
-        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.8);
+        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.4);
       }
     }
     this.verb.buffer = impulse;
@@ -91,6 +96,9 @@ export class AudioEngine {
     this.analyser.connect(this.ctx.destination);
 
     this.voices = new VoiceManager(this.ctx);
+    this.samplers = new SamplerManager(this.ctx, this.dryBus, this.vsend);
+    this.samplers.preloadForStation(this.station.id, this.prefInstrument);
+
     // Connect ambient to master bus (post-compressor) so weather noise doesn't trigger sidechain pumping on music
     this.ambient = new AmbientEngine(this.ctx, this.master);
 
@@ -117,8 +125,7 @@ export class AudioEngine {
     }
 
     this.playing = true;
-    if (this.timer) clearInterval(this.timer);
-    this.timer = window.setInterval(() => this.sched(), 30);
+    this.schedLoop();
     this.onPlayStateChange?.(this.playing);
   }
 
@@ -130,9 +137,14 @@ export class AudioEngine {
     this.master.gain.setValueAtTime(this.master.gain.value, t);
     this.master.gain.linearRampToValueAtTime(0.0001, t + 0.35);
 
+    // Stop the look-ahead scheduler
+    if (this.schedTimer !== null) {
+      clearTimeout(this.schedTimer);
+      this.schedTimer = null;
+    }
+
     setTimeout(() => {
       if (!this.playing && this.ctx) {
-        if (this.timer) clearInterval(this.timer);
         this.ctx.suspend();
       }
     }, 400);
@@ -259,17 +271,26 @@ export class AudioEngine {
     if (st === 0) {
       voicing.forEach((midi, i) => {
         const freq = m2f(midi);
-        this.voices.playPadChord(
-          activeInst,
-          freq,
-          t,
-          sd * 15,
-          i,
-          cm,
-          0.6 * wm,
-          D.wet,
-          D.dry
-        );
+        let handled = false;
+        if (activeInst === 'piano') {
+          handled = this.samplers.playCello(midi - 12, t, sd * 14, 0.75);
+        } else if (activeInst === 'space') {
+          handled = this.samplers.playPad(midi, t, sd * 14, 0.7);
+        }
+
+        if (!handled) {
+          this.voices.playPadChord(
+            activeInst,
+            freq,
+            t,
+            sd * 15,
+            i,
+            cm,
+            0.6 * wm,
+            D.wet,
+            D.dry
+          );
+        }
       });
     }
 
@@ -287,39 +308,67 @@ export class AudioEngine {
       }
     }
 
-    // 3. Play Melodic Voice (using active instrument)
+    // 3. Play Melodic Voice (Prioritizes HD Sampler with automatic Synth fallback)
     if (T.melOn[bar]) {
       const m = T.mel[bar][st];
       if (m !== null) {
         const melMidi = T.root + 12 + T.sc[((m % T.sc.length) + T.sc.length) % T.sc.length] + Math.floor(m / T.sc.length) * 12;
         const freq = m2f(melMidi);
         const velocity = st % 4 === 0 ? 1.0 : 0.82; // Dynamic accent on downbeats
-        this.voices.playMelodicNote(
-          activeInst,
-          freq,
-          t,
-          sd * 2.2,
-          velocity,
-          cm,
-          D.wet,
-          D.dry
-        );
+        let handled = false;
+
+        if (activeInst === 'cowbell') {
+          // Authentic chromatically tuned Roland TR-808 cowbell
+          handled = this.samplers.playPhonkCowbell(melMidi, t, sd * 1.5, velocity);
+        } else if (activeInst === 'piano') {
+          // Steinway Concert Grand multi-sample
+          handled = this.samplers.playPiano(melMidi, t, sd * 2.5, velocity);
+        } else if (activeInst === 'organ') {
+          // Multi-rank Cathedral Church Organ
+          handled = this.samplers.playOrgan(melMidi, t, sd * 2.0, velocity);
+        } else if (activeInst === 'rhodes') {
+          // Vintage Electric Piano Rhodes
+          handled = this.samplers.playRhodes(melMidi, t, sd * 2.2, velocity);
+        } else if (activeInst === 'space') {
+          // Deep cosmic shimmer pad
+          handled = this.samplers.playPad(melMidi, t, sd * 3.5, velocity);
+        }
+
+        if (!handled) {
+          this.voices.playMelodicNote(
+            activeInst,
+            freq,
+            t,
+            sd * 2.2,
+            velocity,
+            cm,
+            D.wet,
+            D.dry
+          );
+        }
       }
     }
 
     // 4. Play Drums
     if (T.dr && T.drOn[bar]) {
       if (T.dr === 3) {
-        // Phonk Trap Beat: Punchy kick syncopations, half-time snare on 8, rapid hats
+        // Phonk Trap Beat: Real hardware TR-808 punchy kicks, crisp claps, and fast hats
         if ([0, 6, 10].includes(st)) {
-          this.voices.playKick(t, 0.85, D.dry);
+          if (!this.samplers.playTr808Drum('kick', t, 0.95)) {
+            this.voices.playKick(t, 0.85, D.dry);
+          }
         }
         if (st === 8) {
-          this.voices.playNoiseHit(t, 0.22, 0.42, 'bandpass', 1600, D.dry);
+          if (!this.samplers.playTr808Drum('clap', t, 0.88)) {
+            this.voices.playNoiseHit(t, 0.22, 0.42, 'bandpass', 1600, D.dry);
+          }
         }
         // Rapid 16th trap hats with velocity dynamics
-        const hVol = st % 2 === 0 ? 0.11 : 0.07;
-        this.voices.playNoiseHit(t, 0.035, hVol, 'highpass', 7800, D.dry);
+        const hVol = st % 2 === 0 ? 0.65 : 0.4;
+        if (!this.samplers.playTr808Drum('hihat', t, hVol)) {
+          const hVolSynth = st % 2 === 0 ? 0.11 : 0.07;
+          this.voices.playNoiseHit(t, 0.035, hVolSynth, 'highpass', 7800, D.dry);
+        }
       } else {
         if (T.kick.includes(st)) {
           this.voices.playKick(t, T.dr === 2 ? 0.7 : 0.45, D.dry);
@@ -333,6 +382,18 @@ export class AudioEngine {
         }
       }
     }
+  }
+
+  /**
+   * Look-ahead scheduler — reschedules itself via setTimeout.
+   * This pattern avoids setInterval drift and keeps the JS thread responsive.
+   * Notes are scheduled up to LOOKAHEAD seconds ahead using AudioContext.currentTime,
+   * which is sample-accurate regardless of JS timer jitter.
+   */
+  private schedLoop() {
+    if (!this.playing) return;
+    this.sched();
+    this.schedTimer = setTimeout(() => this.schedLoop(), this.SCHED_INTERVAL);
   }
 
   private sched() {
@@ -351,7 +412,7 @@ export class AudioEngine {
         if (D.next && D.next.bpm !== targetB) D.next.bpm = targetB;
       }
 
-      const lim = Math.min(now + 0.15, D.stopAt);
+      const lim = Math.min(now + this.LOOKAHEAD, D.stopAt);
       const total = D.tr.bars * 16;
 
       while (D.nt < lim && D.step < total) {
@@ -372,9 +433,9 @@ export class AudioEngine {
       if (D.step >= total && D.stopAt === Infinity) D.stopAt = D.nt;
     }
 
-    // Clean up finished decks
+    // Clean up finished decks — disconnect promptly to free audio graph nodes
     this.decks = this.decks.filter(D => {
-      if (now > D.stopAt + 10) {
+      if (now > D.stopAt + 4) {
         [D.f1, D.f2, D.dry, D.wet].forEach(x => x.disconnect());
         return false;
       }
@@ -396,6 +457,7 @@ export class AudioEngine {
 
   public tuneStation(st: Station) {
     this.station = st;
+    this.samplers?.preloadForStation(st.id, this.prefInstrument);
     this.currentTrack = this.generateNextTrack();
     if (!this.started || !this.ctx) {
       this.onTrackChange?.(this.currentTrack);
@@ -439,6 +501,7 @@ export class AudioEngine {
 
   public setInstrument(inst: InstrumentId | null | 'default' | 'auto') {
     this.prefInstrument = !inst || inst === 'default' ? 'auto' : inst;
+    this.samplers?.preloadForStation(this.station.id, this.prefInstrument);
   }
 
   public setWeatherMuted(muted: boolean) {

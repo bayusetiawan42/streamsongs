@@ -411,7 +411,12 @@ export function generateTrack(
   } else {
     const scalePool = isAuto ? [...P.sc, ...X.sc] : (station.sc || P.sc);
     scn = pick(scalePool);
-    pc = prevTrack ? (prevTrack.pc + pick([0, 0, 5, 7, 9])) % 12 : Math.floor(r() * 12);
+    if (station.id === 'phonk') {
+      // Dark, punchy sub-bass keys preferred by Phonk producers (A, C#, E, D)
+      pc = pick([9, 1, 4, 2]);
+    } else {
+      pc = prevTrack ? (prevTrack.pc + pick([0, 0, 5, 7, 9])) % 12 : Math.floor(r() * 12);
+    }
   }
   const sc = SCALES[scn as ScaleName] || SCALES.major;
   const root = 48 + pc;
@@ -490,14 +495,24 @@ export function generateTrack(
         const stepDeg = ostinato[s % ostinato.length];
         n = rootChordNote + stepDeg;
       } else if (station.id === 'phonk') {
-        // Syncopated 808 cowbell riff (DVRST / Kordhell style)
-        const phonkHit = [0, 3, 6, 8, 10, 12, 14].includes(s);
-        if (phonkHit) {
-          const riff = [0, 3, 5, 7, 10, 12, 7, 5];
-          n = rootChordNote + riff[(s + b * 2) % riff.length];
-        } else {
-          n = null;
-        }
+        // Authentic Drift Phonk 808 Cowbell riffs (DVRST, Kordhell, Pharmacist style)
+        // 3-3-2 syncopated phrasing with Phrygian tension (b2, b5 tritone) and 4-bar progression
+        const phonkPatternA = [
+          0, null, 3, 5, null, 3, 6, null, // bar 0/2: driving question riff
+          5, null, 3, 1, null, 3, 0, null
+        ];
+        const phonkPatternB = [
+          0, null, 3, 7, null, 6, 5, null, // bar 1: high fifth response
+          3, null, 1, 3, null, 5, 3, null
+        ];
+        const phonkTurnaround = [
+          0, null, 3, 5, 6, 5, 3, 1,        // bar 3: rapid 16th-note climax burst
+          0, null, 1, 0, 1, 3, 0, null
+        ];
+
+        const pattern = b === 3 ? phonkTurnaround : (b % 2 === 1 ? phonkPatternB : phonkPatternA);
+        const stepDeg = pattern[s];
+        n = stepDeg !== null ? rootChordNote + stepDeg : null;
       } else if (station.id === 'sad') {
         // Ludovico Einaudi / Yiruma poignant rolling piano arpeggios & emotional answering motif
         const isArpStep = s % 2 === 0;

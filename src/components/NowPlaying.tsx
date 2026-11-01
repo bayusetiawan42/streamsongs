@@ -11,6 +11,7 @@ interface NowPlayingProps {
   prefBpm: 'default' | number;
   lockedKey: { root: number; scale: ScaleName } | null;
   volume: number;
+  hdAudioStatus?: 'idle' | 'loading' | 'ready';
   onTogglePlay: () => void;
   onPrevStation: () => void;
   onNextStation: () => void;
@@ -43,6 +44,7 @@ export const NowPlaying: React.FC<NowPlayingProps> = ({
   prefBpm,
   lockedKey,
   volume,
+  hdAudioStatus,
   onTogglePlay,
   onPrevStation,
   onNextStation,
@@ -282,6 +284,20 @@ export const NowPlaying: React.FC<NowPlayingProps> = ({
               />
               <span id="twx">{weather.label}</span>
             </button>
+
+            {/* 4. Studio HD Sampler Status Tag */}
+            {hdAudioStatus === 'loading' && (
+              <span className="tag" title="Loading studio audio samples...">
+                <i className="fa-solid fa-circle-notch fa-spin" />
+                <span>HD Buffering…</span>
+              </span>
+            )}
+            {hdAudioStatus === 'ready' && (
+              <span className="tag active" title="Studio HD Sampler Active (Authentic multi-sampled instruments)">
+                <i className="fa-solid fa-wand-magic-sparkles" />
+                <span>HD Audio</span>
+              </span>
+            )}
           </div>
         </div>
       </div>

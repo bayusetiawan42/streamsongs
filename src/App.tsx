@@ -127,6 +127,36 @@ export const App: React.FC = () => {
     }, 2800);
   }, []);
 
+  // Studio HD Sampler Status
+  const [hdStatus, setHdStatus] = useState<'idle' | 'loading' | 'ready'>('idle');
+
+  useEffect(() => {
+    if (!engine) return;
+    const updateSamplerState = () => {
+      if (!engine.samplers) return;
+      engine.samplers.onStatusChange = (inst, status) => {
+        const statuses = Object.values(engine.samplers.status);
+        const anyLoading = statuses.some((s) => s === 'loading');
+        const anyReady = statuses.some((s) => s === 'ready');
+        setHdStatus(anyLoading ? 'loading' : anyReady ? 'ready' : 'idle');
+
+        if (status === 'ready') {
+          const names: Record<string, string> = {
+            tr808: 'Roland TR-808 Kit',
+            piano: 'Steinway Concert Grand',
+            organ: 'Cathedral Pipe Organ',
+            rhodes: 'Rhodes Electric Piano',
+            strings: 'Cello String Ensemble',
+            pad: 'Cosmos Shimmer Pad'
+          };
+          showToast(`✨ ${names[inst] || inst} HD Samples Active`);
+        }
+      };
+    };
+
+    updateSamplerState();
+  }, [engine, showToast]);
+
   // Theme Object (fully managed by themeEngine)
   const [theme, setTheme] = useState<ThemePalette>(DEFAULT_THEME);
 
@@ -528,6 +558,7 @@ export const App: React.FC = () => {
           prefBpm={prefBpm}
           lockedKey={lockedKey}
           volume={volume}
+          hdAudioStatus={hdStatus}
           onTogglePlay={handleTogglePlay}
           onPrevStation={handlePrevStation}
           onNextStation={handleNextStation}

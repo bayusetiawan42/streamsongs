@@ -19,6 +19,24 @@ export class VoiceManager {
   }
 
   /**
+   * Automatic Node Lifecycle Cleanup:
+   * When the audio source stops, cleanly disconnects all attached nodes
+   * to immediately free memory, stop graph traversal, and avoid audio glitches / GC pauses.
+   */
+  private cleanupOnEnd(source: AudioScheduledSourceNode, ...nodes: (AudioNode | null | undefined)[]) {
+    source.onended = () => {
+      try {
+        source.disconnect();
+        for (let i = 0; i < nodes.length; i++) {
+          nodes[i]?.disconnect();
+        }
+      } catch {
+        // Safe ignore if already disconnected
+      }
+    };
+  }
+
+  /**
    * Main Melodic Voice Generator
    * Routes to specific instrument algorithm based on instrumentId.
    */
@@ -1351,6 +1369,7 @@ export class VoiceManager {
 
     osc.start(t);
     osc.stop(t + 0.35);
+    this.cleanupOnEnd(osc, env);
   }
 
   // Snare, Hi-hat, Foley Noise
@@ -1377,5 +1396,6 @@ export class VoiceManager {
 
     src.start(t);
     src.stop(t + dur + 0.05);
+    this.cleanupOnEnd(src, filter, env);
   }
 }
