@@ -129,6 +129,8 @@ export const App: React.FC = () => {
 
   // Studio HD Sampler Status
   const [hdStatus, setHdStatus] = useState<'idle' | 'loading' | 'ready'>('idle');
+  // Generative Transformation Bridge Info
+  const [transitionInfo, setTransitionInfo] = useState<string | null>(null);
 
   useEffect(() => {
     if (!engine) return;
@@ -155,6 +157,16 @@ export const App: React.FC = () => {
     };
 
     updateSamplerState();
+
+    // Listen to harmonic modulation & metric transitions
+    engine.onTransitionChange = (inTransition, description) => {
+      if (inTransition && description) {
+        setTransitionInfo(description);
+        showToast(`⚡ ${description}`);
+      } else {
+        setTransitionInfo(null);
+      }
+    };
   }, [engine, showToast]);
 
   // Theme Object (fully managed by themeEngine)
@@ -559,6 +571,7 @@ export const App: React.FC = () => {
           lockedKey={lockedKey}
           volume={volume}
           hdAudioStatus={hdStatus}
+          transitionInfo={transitionInfo}
           onTogglePlay={handleTogglePlay}
           onPrevStation={handlePrevStation}
           onNextStation={handleNextStation}

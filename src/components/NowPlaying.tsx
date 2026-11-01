@@ -12,6 +12,7 @@ interface NowPlayingProps {
   lockedKey: { root: number; scale: ScaleName } | null;
   volume: number;
   hdAudioStatus?: 'idle' | 'loading' | 'ready';
+  transitionInfo?: string | null;
   onTogglePlay: () => void;
   onPrevStation: () => void;
   onNextStation: () => void;
@@ -45,6 +46,7 @@ export const NowPlaying: React.FC<NowPlayingProps> = ({
   lockedKey,
   volume,
   hdAudioStatus,
+  transitionInfo,
   onTogglePlay,
   onPrevStation,
   onNextStation,
@@ -296,6 +298,14 @@ export const NowPlaying: React.FC<NowPlayingProps> = ({
               <span className="tag active" title="Studio HD Sampler Active (Authentic multi-sampled instruments)">
                 <i className="fa-solid fa-wand-magic-sparkles" />
                 <span>HD Audio</span>
+              </span>
+            )}
+
+            {/* 5. Generative Modulation Bridge Active Tag */}
+            {transitionInfo && (
+              <span className="tag active chip-pulsing" title={transitionInfo} style={{ borderColor: 'var(--glow)', color: 'var(--glow)' }}>
+                <i className="fa-solid fa-bolt fa-fade" />
+                <span>{transitionInfo}</span>
               </span>
             )}
           </div>
