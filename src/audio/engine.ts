@@ -260,6 +260,9 @@ export class AudioEngine {
   }
 
   private playStep(D: Deck, s: number, t: number, sd: number) {
+    // GC: clear any stale completed bridge that wasn't nulled (safety net)
+    if (D.bridge?.completed) D.bridge = null;
+
     const st = s % 16;
     const bar = Math.floor(s / 16);
     const bridge: TransitionBridge | undefined = D.bridge;
@@ -554,8 +557,8 @@ export class AudioEngine {
     const now = this.ctx.currentTime;
 
     for (const D of this.decks) {
-      // Smooth BPM Gliding
-      if (this.prefBpm !== 'default') {
+      // Smooth BPM Gliding — skip when bridge is already ramping BPM
+      if (this.prefBpm !== 'default' && !(D.bridge && D.bridge.reason === 'bpm')) {
         const targetB = Number(this.prefBpm);
         if (Math.abs(D.tr.bpm - targetB) > 0.3) {
           D.tr.bpm += (targetB - D.tr.bpm) * 0.04;
