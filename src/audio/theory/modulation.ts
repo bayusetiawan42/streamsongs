@@ -83,3 +83,70 @@ export function planModulation(
     fifthsDistance: distance
   };
 }
+
+/**
+ * Multi-bar pivot chord chain for slow morph transitions.
+ * Walks the circle of fifths from the outgoing key toward the target one
+ * intermediate chord per bar, voice-led through shared tones, and finishes
+ * with the authentic single-bar approach chord (pivot / dominant / chromatic).
+ */
+export function planModulationChain(
+  fromRoot: number,
+  fromPc: number,
+  fromScn: ScaleName | string,
+  toRoot: number,
+  toPc: number,
+  toScn: ScaleName | string,
+  startVoicing: number[],
+  bars: number
+): ModulationPath[] {
+  const fromScale = SCALES[fromScn as ScaleName] || SCALES.minor;
+  const targetScn = (SCALES[toScn as ScaleName] ? toScn : 'minor') as ScaleName;
+  const toScale = SCALES[targetScn];
+
+  const posA = (fromPc * 7) % 12;
+  const posB = (toPc * 7) % 12;
+  let diff = posB - posA;
+  if (diff > 6) diff -= 12;
+  if (diff < -6) diff += 12;
+
+  const chain: ModulationPath[] = [];
+  let prevVoicing = startVoicing;
+  let prevRoot = fromRoot;
+  let prevPc = fromPc;
+  let prevScn: ScaleName = fromScn as ScaleName;
+
+  for (let i = 0; i < bars; i++) {
+    if (i === bars - 1) {
+      chain.push(planModulation(prevRoot, prevPc, prevScn, toRoot, toPc, targetScn, prevVoicing));
+      break;
+    }
+
+    const t = (i + 1) / bars;
+    const stepPos = ((posA + diff * t) % 12 + 12) % 12;
+    // Invert the fifths mapping (7 is its own inverse mod 12) to get the pitch class
+    const pc = Math.round(stepPos) * 7 % 12;
+    const root = 48 + pc;
+    const useTarget = t > 0.5;
+    const scale = useTarget ? toScale : fromScale;
+    const scn = useTarget ? targetScn : prevScn;
+
+    const bridgeVoicing = voiceLead(prevVoicing, [0, 2, 4, 6], scale, root);
+    chain.push({
+      type: 'pivot',
+      bridgeVoicing,
+      bridgeBass: [root - 24, root - 24],
+      targetRoot: root,
+      targetPc: pc,
+      targetScn: scn,
+      fifthsDistance: getFifthsDistance(fromPc, pc)
+    });
+
+    prevVoicing = bridgeVoicing;
+    prevRoot = root;
+    prevPc = pc;
+    prevScn = scn;
+  }
+
+  return chain;
+}

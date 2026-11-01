@@ -4,14 +4,37 @@ import { AmbientEngine } from './ambient';
 import { SamplerManager } from './sampler/samplerManager';
 import { generateTrack, STATIONS } from './theory/generator';
 import { m2f, NOTE_NAMES, SCALES, ScaleName } from './theory/scales';
-import { planModulation, ModulationPath } from './theory/modulation';
+import { planModulation, planModulationChain, getFifthsDistance, ModulationPath } from './theory/modulation';
+import { voiceLead } from './theory/chords';
 import { generateMelodicFiller } from './theory/fillers';
 import { getDrumFillStep } from './theory/drumFills';
+import {
+  computeTransitionEnergy,
+  planTransitionStrategy,
+  TransitionContext,
+  TransitionMode,
+  TransitionPlan,
+  TransitionStyle
+} from './theory/strategy';
+import {
+  morphEase,
+  morphCutoffScale,
+  morphWetScale,
+  morphVelocity,
+  morphDropout,
+  morphTimingJitter,
+  ghostProbability,
+  morphNoteToKey
+} from './theory/morph';
 
 export interface TransitionBridge {
   barStart: number;
   barsTotal: number;
+  mode: TransitionMode;
+  style: TransitionStyle;
   modulation: ModulationPath;
+  /** Multi-bar pivot chord chain, morph mode only */
+  chain?: ModulationPath[];
   melodicFiller: (number | null)[];
   startBpm: number;
   targetBpm: number;
@@ -243,12 +266,13 @@ export class AudioEngine {
     const T = D.tr;
     let b = T.bpm;
 
-    // Metric BPM interpolation during transition bridge
+    // Metric BPM interpolation during transition bridge (eased for morph drift)
     if (D.bridge && D.bridge.startBpm !== D.bridge.targetBpm) {
       const stepStart = D.bridge.barStart * 16;
       const stepEnd = stepStart + D.bridge.barsTotal * 16;
       if (D.step >= stepStart && D.step < stepEnd) {
-        const progress = (D.step - stepStart) / (stepEnd - stepStart);
+        const raw = (D.step - stepStart) / (stepEnd - stepStart);
+        const progress = D.bridge.mode === 'morph' ? morphEase(raw) : raw;
         b = D.bridge.startBpm + (D.bridge.targetBpm - D.bridge.startBpm) * progress;
       }
     } else if (D.next && D.step >= T.bars * 16 - 128) {
@@ -257,6 +281,30 @@ export class AudioEngine {
     }
 
     return 60 / b / 4;
+  }
+
+  /**
+   * Retunes a live track object into a new key, rebuilding the voice-led
+   * voicings and bass program so post-transition playback stays 100% legal.
+   */
+  private applyKeyToTrack(tr: Track, pc: number, scn: string) {
+    const sc = SCALES[scn as ScaleName] || SCALES.minor;
+    tr.pc = pc;
+    tr.root = 48 + pc;
+    tr.rootName = NOTE_NAMES[pc];
+    tr.scn = scn;
+    tr.scale = scn;
+    tr.sc = sc;
+    tr.key = `${NOTE_NAMES[pc]} ${scn}`;
+    tr.bassProg = tr.prog.map(d => sc[((d % sc.length) + sc.length) % sc.length] + tr.root - 24);
+    const voicings: number[][] = [];
+    let prev: number[] = [];
+    for (const rootDeg of tr.prog) {
+      const voiced = voiceLead(prev, [rootDeg, rootDeg + 2, rootDeg + 4, rootDeg + 6], sc, tr.root);
+      voicings.push(voiced);
+      prev = voiced;
+    }
+    tr.voicings = voicings;
   }
 
   private playStep(D: Deck, s: number, t: number, sd: number) {
@@ -273,42 +321,50 @@ export class AudioEngine {
     if (isLandingBar && bridge) {
       bridge.completed = true;
       const { pc, scn } = bridge.targetKey;
-      D.tr.pc = pc;
-      D.tr.root = 48 + pc;
-      D.tr.rootName = NOTE_NAMES[pc];
-      D.tr.scn = scn;
-      D.tr.scale = scn;
-      D.tr.key = `${NOTE_NAMES[pc]} ${scn}`;
+      this.applyKeyToTrack(D.tr, pc, scn);
       D.tr.bpm = bridge.targetBpm;
-      if (D.next) {
-        D.next.pc = pc;
-        D.next.root = 48 + pc;
-        D.next.rootName = NOTE_NAMES[pc];
-        D.next.scn = scn;
-        D.next.scale = scn;
-        D.next.key = `${NOTE_NAMES[pc]} ${scn}`;
-      }
+      if (D.next) this.applyKeyToTrack(D.next, pc, scn);
       D.bridge = null;
       this.pendingKeyChange = null;
       this.onTrackChange?.(D.tr);
       this.onTransitionChange?.(false);
 
-      // Downbeat impact: heavy kick punch + sub-impact
-      if (!this.samplers.playTr808Drum('kick', t, 1.0)) {
-        this.voices.playKick(t, 1.0, D.dry);
-      }
-      if (D.tr.stId === 'phonk') {
-        this.samplers.playTr808Drum('clap', t, 0.9);
+      if (bridge.mode === 'morph') {
+        // Soft landing: the new key already arrived via ghost infiltration —
+        // swell the tonic dyad instead of hammering an impact kick.
+        const activeInst = this.prefInstrument !== 'auto' ? this.prefInstrument : D.tr.instrument;
+        [48 + pc, 55 + pc].forEach((midi, i) => {
+          this.voices.playPadChord(
+            activeInst,
+            m2f(midi),
+            t,
+            sd * 16,
+            i,
+            D.tr.cut,
+            0.9 * D.tr.wet,
+            D.wet,
+            D.dry
+          );
+        });
+      } else {
+        // Downbeat impact: heavy kick punch + sub-impact
+        if (!this.samplers.playTr808Drum('kick', t, 1.0)) {
+          this.voices.playKick(t, 1.0, D.dry);
+        }
+        if (D.tr.stId === 'phonk') {
+          this.samplers.playTr808Drum('clap', t, 0.9);
+        }
       }
     }
 
-    // 2. GENERATIVE BRIDGE FILLER EXECUTION
-    if (isBridging && bridge) {
+    // 2. GENERATIVE BRIDGE FILLER EXECUTION (drop / bridge modes only —
+    //    morph dissolves through the normal playback path instead)
+    if (isBridging && bridge && bridge.mode !== 'morph') {
       const bridgeStep = (s - bridge.barStart * 16) % 16;
       const activeInst = this.prefInstrument !== 'auto' ? this.prefInstrument : D.tr.instrument;
 
-      // A. Bridge Chords (Pivot / Secondary Dominant) on step 0 of bridge
-      if (bridgeStep === 0) {
+      // A. Bridge Chords (Pivot / Secondary Dominant) on step 0 of bridge — skipped on hard drops
+      if (bridgeStep === 0 && bridge.mode !== 'drop') {
         bridge.modulation.bridgeVoicing.forEach((midi, i) => {
           const freq = m2f(midi);
           let handled = false;
@@ -333,8 +389,8 @@ export class AudioEngine {
         });
       }
 
-      // B. Bridge Bass (Voice-led pathway)
-      if (bridgeStep === 0 || bridgeStep === 8) {
+      // B. Bridge Bass (Voice-led pathway) — skipped on hard drops
+      if ((bridgeStep === 0 || bridgeStep === 8) && bridge.mode !== 'drop') {
         const bassMidi = bridgeStep === 0 ? bridge.modulation.bridgeBass[0] : bridge.modulation.bridgeBass[1];
         this.voices.playBassNote(activeInst, m2f(bassMidi), t, sd * 7.0, false, D.dry);
       }
@@ -396,30 +452,36 @@ export class AudioEngine {
     // Fallback instant harmonic transition if no bridge queued
     if (st === 0 && this.pendingKeyChange) {
       const { pc, scn } = this.pendingKeyChange;
-      D.tr.pc = pc;
-      D.tr.root = 48 + pc;
-      D.tr.rootName = NOTE_NAMES[pc];
-      D.tr.scn = scn;
-      D.tr.scale = scn;
-      D.tr.key = `${NOTE_NAMES[pc]} ${scn}`;
-      if (D.next) {
-        D.next.pc = pc;
-        D.next.root = 48 + pc;
-        D.next.rootName = NOTE_NAMES[pc];
-        D.next.scn = scn;
-        D.next.scale = scn;
-        D.next.key = `${NOTE_NAMES[pc]} ${scn}`;
-      }
+      this.applyKeyToTrack(D.tr, pc, scn);
+      if (D.next) this.applyKeyToTrack(D.next, pc, scn);
       this.pendingKeyChange = null;
       this.onTrackChange?.(D.tr);
     }
 
+    // 3. MORPH CONTEXT — normal playback keeps running while the key dissolves:
+    //    ghost notes infiltrate, pivot-chain chords steer the harmony,
+    //    BPM drifts on an eased curve and the flavor matches the station.
+    const morphing = !!(isBridging && bridge && bridge.mode === 'morph');
+    const mStyle: TransitionStyle = bridge?.mode === 'morph' ? bridge.style : 'generic-morph';
+    let mProg = 0;
+    let morphChainEntry: ModulationPath | undefined;
+    if (morphing && bridge) {
+      const barIdx = Math.min(bar - bridge.barStart, bridge.barsTotal - 1);
+      mProg = (barIdx + st / 16) / bridge.barsTotal;
+      morphChainEntry = bridge.chain?.[barIdx];
+    }
+
     const T = D.tr;
     const chordIndex = bar % 4;
-    const voicing = T.voicings[chordIndex] || [T.root, T.root + 7];
+    const voicing = (morphing && morphChainEntry ? morphChainEntry.bridgeVoicing : T.voicings[chordIndex]) || [T.root, T.root + 7];
 
-    const cm = T.cut * (1 + 0.25 * Math.sin(bar * 0.5 + T.ph));
-    const wm = T.wet * (1 + 0.25 * Math.sin(bar * 0.37 + T.ph * 2));
+    let cm = T.cut * (1 + 0.25 * Math.sin(bar * 0.5 + T.ph));
+    let wm = T.wet * (1 + 0.25 * Math.sin(bar * 0.37 + T.ph * 2));
+    if (morphing) {
+      cm *= morphCutoffScale(mProg, mStyle);
+      wm *= morphWetScale(mProg, mStyle);
+    }
+    const mVel = morphing ? morphVelocity(mProg, mStyle) : 1;
 
     const activeInst = this.prefInstrument !== 'auto' ? this.prefInstrument : T.instrument;
 
@@ -450,17 +512,18 @@ export class AudioEngine {
       });
     }
 
-    // 2. Play Bassline (Adaptive to selected instrument)
+    // 2. Play Bassline (Adaptive to selected instrument) — follows the
+    //    multi-step chord journey during a morph
     if (T.bassOn[bar]) {
-      const bassFreq = m2f(T.bassProg[chordIndex]);
+      const bassRoot = morphing && morphChainEntry ? morphChainEntry.targetRoot - 24 : T.bassProg[chordIndex];
       const isPulseBass = T.pulse || activeInst === 'synthwave';
       if (isPulseBass) {
         if (st % 2 === 0) {
           const oct = st % 4 === 2 ? 12 : 0;
-          this.voices.playBassNote(activeInst, m2f(T.bassProg[chordIndex] + oct), t, sd * 1.5, true, D.dry);
+          this.voices.playBassNote(activeInst, m2f(bassRoot + oct), t, sd * 1.5, true, D.dry);
         }
       } else if (st === 0 || st === 8) {
-        this.voices.playBassNote(activeInst, bassFreq, t, sd * 7.5, false, D.dry);
+        this.voices.playBassNote(activeInst, m2f(bassRoot), t, sd * 7.5, false, D.dry);
       }
     }
 
@@ -468,72 +531,90 @@ export class AudioEngine {
     if (T.melOn[bar]) {
       const m = T.mel[bar][st];
       if (m !== null) {
-        const melMidi = T.root + 12 + T.sc[((m % T.sc.length) + T.sc.length) % T.sc.length] + Math.floor(m / T.sc.length) * 12;
+        let melMidi = T.root + 12 + T.sc[((m % T.sc.length) + T.sc.length) % T.sc.length] + Math.floor(m / T.sc.length) * 12;
+
+        // Ghost note infiltration: outgoing notes get re-tuned into the
+        // incoming key with rising probability; rubato styles thin out.
+        let ghosted = false;
+        if (morphing && bridge) {
+          if (Math.random() < morphDropout(mProg, mStyle)) {
+            melMidi = -1;
+          } else if (Math.random() < ghostProbability(mProg, mStyle)) {
+            melMidi = morphNoteToKey(melMidi, 48 + bridge.targetKey.pc, SCALES[bridge.targetKey.scn as ScaleName] || SCALES.minor);
+            ghosted = true;
+          }
+        }
+
+        if (melMidi >= 0) {
         const freq = m2f(melMidi);
-        const velocity = st % 4 === 0 ? 1.0 : 0.82; // Dynamic accent on downbeats
+        const velocity = (st % 4 === 0 ? 1.0 : 0.82) * mVel; // Dynamic accents, dissolving across a morph
+        const tMel = t + (morphing ? morphTimingJitter(mProg, mStyle, sd) : 0);
+        const melDur = morphing && mStyle === 'sad-rubato' ? sd * (2.2 + 1.3 * mProg) : sd * 2.2;
         let handled = false;
 
         if (activeInst === 'cowbell') {
           // Authentic chromatically tuned Roland TR-808 cowbell
-          handled = this.samplers.playPhonkCowbell(melMidi, t, sd * 1.5, velocity);
+          handled = this.samplers.playPhonkCowbell(melMidi, tMel, sd * 1.5, velocity);
         } else if (activeInst === 'piano') {
           // Steinway Concert Grand multi-sample
-          handled = this.samplers.playPiano(melMidi, t, sd * 2.5, velocity);
+          handled = this.samplers.playPiano(melMidi, tMel, sd * 2.5, velocity);
         } else if (activeInst === 'organ') {
           // Multi-rank Cathedral Church Organ
-          handled = this.samplers.playOrgan(melMidi, t, sd * 2.0, velocity);
+          handled = this.samplers.playOrgan(melMidi, tMel, sd * 2.0, velocity);
         } else if (activeInst === 'rhodes') {
           // Vintage Electric Piano Rhodes
-          handled = this.samplers.playRhodes(melMidi, t, sd * 2.2, velocity);
+          handled = this.samplers.playRhodes(melMidi, tMel, sd * 2.2, velocity);
         } else if (activeInst === 'space') {
           // Deep cosmic shimmer pad
-          handled = this.samplers.playPad(melMidi, t, sd * 3.5, velocity);
+          handled = this.samplers.playPad(melMidi, tMel, sd * 3.5, velocity);
         }
 
         if (!handled) {
           this.voices.playMelodicNote(
             activeInst,
             freq,
-            t,
-            sd * 2.2,
-            velocity,
+            tMel,
+            melDur,
+            ghosted ? velocity * 0.8 : velocity,
             cm,
             D.wet,
             D.dry
           );
         }
+        }
       }
     }
 
-    // 4. Play Drums
+    // 4. Play Drums (thin out progressively while a morph dissolves)
+    const drumF = morphing ? 1 - 0.45 * mProg : 1;
     if (T.dr && T.drOn[bar]) {
       if (T.dr === 3) {
         // Phonk Trap Beat: Real hardware TR-808 punchy kicks, crisp claps, and fast hats
         if ([0, 6, 10].includes(st)) {
-          if (!this.samplers.playTr808Drum('kick', t, 0.95)) {
-            this.voices.playKick(t, 0.85, D.dry);
+          if (!this.samplers.playTr808Drum('kick', t, 0.95 * drumF)) {
+            this.voices.playKick(t, 0.85 * drumF, D.dry);
           }
         }
         if (st === 8) {
-          if (!this.samplers.playTr808Drum('clap', t, 0.88)) {
-            this.voices.playNoiseHit(t, 0.22, 0.42, 'bandpass', 1600, D.dry);
+          if (!this.samplers.playTr808Drum('clap', t, 0.88 * drumF)) {
+            this.voices.playNoiseHit(t, 0.22, 0.42 * drumF, 'bandpass', 1600, D.dry);
           }
         }
         // Rapid 16th trap hats with velocity dynamics
         const hVol = st % 2 === 0 ? 0.65 : 0.4;
-        if (!this.samplers.playTr808Drum('hihat', t, hVol)) {
+        if (!this.samplers.playTr808Drum('hihat', t, hVol * drumF)) {
           const hVolSynth = st % 2 === 0 ? 0.11 : 0.07;
-          this.voices.playNoiseHit(t, 0.035, hVolSynth, 'highpass', 7800, D.dry);
+          this.voices.playNoiseHit(t, 0.035, hVolSynth * drumF, 'highpass', 7800, D.dry);
         }
       } else {
         if (T.kick.includes(st)) {
-          this.voices.playKick(t, T.dr === 2 ? 0.7 : 0.45, D.dry);
+          this.voices.playKick(t, (T.dr === 2 ? 0.7 : 0.45) * drumF, D.dry);
         }
         if (T.dr === 2 && (st === 4 || st === 12)) {
-          this.voices.playNoiseHit(t, 0.18, 0.28, 'bandpass', 1850, D.dry);
+          this.voices.playNoiseHit(t, 0.18, 0.28 * drumF, 'bandpass', 1850, D.dry);
         }
         if (T.dr === 2 ? st % 2 === 0 : st % 4 === 2) {
-          const hVol = st % 4 === 2 ? 0.09 : 0.055;
+          const hVol = (st % 4 === 2 ? 0.09 : 0.055) * drumF;
           this.voices.playNoiseHit(t, 0.04, hVol, 'highpass', 7200, D.dry);
         }
       }
@@ -575,7 +656,7 @@ export class AudioEngine {
         if (!D.queued && D.stopAt === Infinity && D.step === total - 64) {
           D.queued = true;
           if (D.next && (D.next.pc !== D.tr.pc || D.next.scn !== D.tr.scn)) {
-            this.triggerDeckOutroBridge(D, D.next, 2);
+            this.triggerDeckOutroBridge(D, D.next);
           }
           const xf = 960 / (D.next ? D.next.bpm : D.tr.bpm);
           this.fadeOutDeck(D, D.nt, xf);
@@ -615,148 +696,132 @@ export class AudioEngine {
   }
 
   /**
-   * Generative Harmonic Modulation Bridge:
-   * Queues a 1-bar or 2-bar musical bridge that calculates pivot chords,
-   * melodic runs, and drum risers to seamlessly transform into targetKey.
+   * Transition Strategy Director — the single funnel for every bridge.
+   * Builds the live TransitionContext, lets the energy score pick
+   * DROP / BRIDGE / MORPH, and queues the matching bridge on one deck.
    */
-  public triggerKeyModulationBridge(targetKey: { pc: number; scn: string }, bridgeBars = 1) {
-    let anyQueued = false;
-    for (const D of this.decks) {
-      if (D.stopAt < Infinity) continue;
-      const currentBar = Math.floor(D.step / 16);
-      const nextBarStart = currentBar + 1;
-      const currentVoicing = D.tr.voicings[(currentBar) % 4] || [D.tr.root, D.tr.root + 7];
-      const targetRoot = 48 + targetKey.pc;
-      const targetScale = SCALES[targetKey.scn as ScaleName] || SCALES.minor;
+  private queueDeckTransition(
+    D: Deck,
+    opts: {
+      reason: TransitionBridge['reason'];
+      targetKey?: { pc: number; scn: string };
+      targetBpm?: number;
+      fatigue?: boolean;
+    }
+  ): TransitionPlan | null {
+    const targetKey = opts.targetKey ?? { pc: D.tr.pc, scn: D.tr.scn };
+    const targetBpm = opts.targetBpm ?? D.tr.bpm;
 
-      const modulation = planModulation(
-        D.tr.root,
-        D.tr.pc,
-        D.tr.scn,
-        targetRoot,
-        targetKey.pc,
-        targetKey.scn,
+    const currentBar = Math.floor(D.step / 16);
+    const barStart = currentBar + 1;
+    const barsRemaining = D.tr.bars - barStart;
+    if (barsRemaining < 1) return null;
+
+    const st = STATIONS.find(s => s.id === D.tr.stId) ?? this.station;
+    const ctx: TransitionContext = {
+      stationId: D.tr.stId,
+      energy: computeTransitionEnergy(st, D.tr.bpm, this.weatherCat, this.period),
+      deltaFifths: getFifthsDistance(D.tr.pc, targetKey.pc),
+      deltaBpm: targetBpm - D.tr.bpm,
+      barPosition: currentBar,
+      barsRemaining,
+      keysOnBeat: (D.step % 16) <= 8,
+      fatigue: opts.fatigue ?? currentBar > D.tr.bars - 4,
+      weather: this.weatherCat,
+      period: this.period
+    };
+
+    const plan = planTransitionStrategy(ctx);
+    const barsTotal = Math.max(1, Math.min(plan.bars, barsRemaining));
+
+    const currentVoicing = D.tr.voicings[currentBar % 4] || [D.tr.root, D.tr.root + 7];
+    const targetRoot = 48 + targetKey.pc;
+    const targetScale = SCALES[targetKey.scn as ScaleName] || SCALES.minor;
+
+    let chain: ModulationPath[] | undefined;
+    let modulation: ModulationPath;
+    if (plan.mode === 'morph') {
+      chain = planModulationChain(
+        D.tr.root, D.tr.pc, D.tr.scn,
+        targetRoot, targetKey.pc, targetKey.scn,
+        currentVoicing, barsTotal
+      );
+      modulation = chain[chain.length - 1];
+    } else {
+      modulation = planModulation(
+        D.tr.root, D.tr.pc, D.tr.scn,
+        targetRoot, targetKey.pc, targetKey.scn,
         currentVoicing
       );
-
-      const activeInst = this.prefInstrument !== 'auto' ? this.prefInstrument : D.tr.instrument;
-      const melodicFiller = generateMelodicFiller(
-        D.tr.stId,
-        activeInst,
-        D.tr.root,
-        targetRoot,
-        targetScale
-      );
-
-      D.bridge = {
-        barStart: nextBarStart,
-        barsTotal: bridgeBars,
-        modulation,
-        melodicFiller,
-        startBpm: D.tr.bpm,
-        targetBpm: D.tr.bpm,
-        targetKey,
-        reason: 'key'
-      };
-      anyQueued = true;
     }
 
-    if (anyQueued) {
-      this.onTransitionChange?.(true, `Modulating to ${NOTE_NAMES[targetKey.pc]} ${targetKey.scn}`);
+    const activeInst = this.prefInstrument !== 'auto' ? this.prefInstrument : D.tr.instrument;
+    const melodicFiller = generateMelodicFiller(D.tr.stId, activeInst, D.tr.root, targetRoot, targetScale, plan.mode);
+
+    D.bridge = {
+      barStart,
+      barsTotal,
+      mode: plan.mode,
+      style: plan.style,
+      modulation,
+      chain,
+      melodicFiller,
+      startBpm: D.tr.bpm,
+      targetBpm: plan.rampBpm ? targetBpm : D.tr.bpm,
+      targetKey,
+      reason: opts.reason
+    };
+    return plan;
+  }
+
+  public queueTransition(opts: {
+    reason: TransitionBridge['reason'];
+    targetKey?: { pc: number; scn: string };
+    targetBpm?: number;
+    fatigue?: boolean;
+  }) {
+    let plan: TransitionPlan | null = null;
+    for (const D of this.decks) {
+      if (D.stopAt < Infinity) continue;
+      const p = this.queueDeckTransition(D, opts);
+      if (p && !plan) plan = p;
+    }
+    if (plan) {
+      this.onTransitionChange?.(true, this.describeTransition(plan, opts));
     }
   }
 
-  /**
-   * Metric BPM Bridge:
-   * Smoothly interpolates the tempo over 1 bar while playing a drum riser & scalar filler.
-   */
-  public triggerBpmBridge(targetBpm: number, bridgeBars = 1) {
-    let anyQueued = false;
-    for (const D of this.decks) {
-      if (D.stopAt < Infinity) continue;
-      const currentBar = Math.floor(D.step / 16);
-      const nextBarStart = currentBar + 1;
-      const currentVoicing = D.tr.voicings[(currentBar) % 4] || [D.tr.root, D.tr.root + 7];
-      const targetScale = SCALES[D.tr.scn as ScaleName] || SCALES.minor;
-
-      const modulation = planModulation(
-        D.tr.root,
-        D.tr.pc,
-        D.tr.scn,
-        D.tr.root,
-        D.tr.pc,
-        D.tr.scn,
-        currentVoicing
-      );
-
-      const activeInst = this.prefInstrument !== 'auto' ? this.prefInstrument : D.tr.instrument;
-      const melodicFiller = generateMelodicFiller(
-        D.tr.stId,
-        activeInst,
-        D.tr.root,
-        D.tr.root,
-        targetScale
-      );
-
-      D.bridge = {
-        barStart: nextBarStart,
-        barsTotal: bridgeBars,
-        modulation,
-        melodicFiller,
-        startBpm: D.tr.bpm,
-        targetBpm,
-        targetKey: { pc: D.tr.pc, scn: D.tr.scn },
-        reason: 'bpm'
-      };
-      anyQueued = true;
+  private describeTransition(
+    plan: TransitionPlan,
+    opts: { targetKey?: { pc: number; scn: string }; targetBpm?: number }
+  ): string {
+    if (!opts.targetKey) {
+      const bpm = Math.round(opts.targetBpm ?? plan.bars);
+      if (plan.mode === 'drop') return `⚡ Tempo drop to ${bpm} BPM`;
+      if (plan.mode === 'bridge') return `🎭 Tempo bridge to ${bpm} BPM`;
+      return `🌫️ Tempo drift to ${bpm} BPM`;
     }
-
-    if (anyQueued) {
-      this.onTransitionChange?.(true, `Ramping tempo to ${targetBpm} BPM`);
-    }
+    const key = `${NOTE_NAMES[opts.targetKey.pc]} ${opts.targetKey.scn}`;
+    if (plan.mode === 'drop') return `⚡ Dropping into ${key}`;
+    if (plan.mode === 'bridge') return `🎭 Bridging into ${key}`;
+    return `🌫️ Morphing into ${key}…`;
   }
 
   /**
    * Outro Bridge for Seamless Song Crossfading:
-   * Outgoing deck harmonically modulates into the incoming deck's key over 2 bars.
+   * Outgoing deck transitions into the incoming deck's key — the strategy
+   * director decides drop vs bridge vs morph (fatigue favors morph).
    */
-  public triggerDeckOutroBridge(D: Deck, nextTrack: Track, bridgeBars = 2) {
-    const currentBar = Math.floor(D.step / 16);
-    const nextBarStart = currentBar + 1;
-    const currentVoicing = D.tr.voicings[(currentBar) % 4] || [D.tr.root, D.tr.root + 7];
-    const targetScale = SCALES[nextTrack.scn as ScaleName] || SCALES.minor;
-
-    const modulation = planModulation(
-      D.tr.root,
-      D.tr.pc,
-      D.tr.scn,
-      nextTrack.root,
-      nextTrack.pc,
-      nextTrack.scn,
-      currentVoicing
-    );
-
-    const activeInst = this.prefInstrument !== 'auto' ? this.prefInstrument : D.tr.instrument;
-    const melodicFiller = generateMelodicFiller(
-      D.tr.stId,
-      activeInst,
-      D.tr.root,
-      nextTrack.root,
-      targetScale
-    );
-
-    D.bridge = {
-      barStart: nextBarStart,
-      barsTotal: bridgeBars,
-      modulation,
-      melodicFiller,
-      startBpm: D.tr.bpm,
-      targetBpm: nextTrack.bpm,
+  public triggerDeckOutroBridge(D: Deck, nextTrack: Track) {
+    const plan = this.queueDeckTransition(D, {
+      reason: 'track_end',
       targetKey: { pc: nextTrack.pc, scn: nextTrack.scn },
-      reason: 'track_end'
-    };
-
-    this.onTransitionChange?.(true, `Bridging to next track in ${nextTrack.key}`);
+      targetBpm: nextTrack.bpm,
+      fatigue: true
+    });
+    if (plan) {
+      this.onTransitionChange?.(true, this.describeTransition(plan, { targetKey: { pc: nextTrack.pc, scn: nextTrack.scn } }));
+    }
   }
 
   public tuneStation(st: Station) {
@@ -768,11 +833,21 @@ export class AudioEngine {
       return;
     }
 
+    // Station identity rule: phonk & arcade switch as a hard drop-cut with
+    // impact; mellow stations keep the slow crossfade morph.
+    const hardDrop = st.id === 'phonk' || st.id === 'arcade';
     const t = this.ctx.currentTime + 0.05;
     this.decks.forEach(D => {
-      if (D.stopAt > t + 2.6) this.fadeOutDeck(D, t, 2.5);
+      if (D.stopAt > t + 2.6) this.fadeOutDeck(D, t, hardDrop ? 0.2 : 2.5);
     });
-    this.startDeck(this.currentTrack, t, 2.5);
+    const newDeck = this.startDeck(this.currentTrack, t, hardDrop ? 0.12 : 2.5);
+    if (hardDrop) {
+      const hit = t + 0.15;
+      if (!this.samplers.playTr808Drum('kick', hit, 1.0)) {
+        this.voices.playKick(hit, 1.0, newDeck.dry);
+      }
+      if (st.id === 'phonk') this.samplers.playTr808Drum('clap', hit, 0.9);
+    }
     this.onTrackChange?.(this.currentTrack);
   }
 
@@ -783,7 +858,7 @@ export class AudioEngine {
   public setBpm(bpm: number | null | 'default') {
     this.prefBpm = bpm === null ? 'default' : bpm;
     if (typeof bpm === 'number' && this.playing && this.decks.length > 0) {
-      this.triggerBpmBridge(bpm, 1);
+      this.queueTransition({ reason: 'bpm', targetBpm: bpm });
     }
   }
 
@@ -794,7 +869,7 @@ export class AudioEngine {
     } else {
       this.prefKey = { pc, scn };
       if (this.playing && this.decks.length > 0) {
-        this.triggerKeyModulationBridge({ pc, scn }, 1);
+        this.queueTransition({ reason: 'key', targetKey: { pc, scn } });
       } else {
         this.pendingKeyChange = { pc, scn };
         if (this.currentTrack) {

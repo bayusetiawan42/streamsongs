@@ -158,11 +158,11 @@ export const App: React.FC = () => {
 
     updateSamplerState();
 
-    // Listen to harmonic modulation & metric transitions
+    // Listen to drop / bridge / morph transitions (copy is mode-aware)
     engine.onTransitionChange = (inTransition, description) => {
       if (inTransition && description) {
         setTransitionInfo(description);
-        showToast(`⚡ ${description}`);
+        showToast(description);
       } else {
         setTransitionInfo(null);
       }

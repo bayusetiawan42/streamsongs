@@ -2,7 +2,8 @@ import { InstrumentId } from '../../types';
 
 /**
  * Generates an expressive 16-step melodic bridge filler
- * tailored to the musical style of the current station / instrument.
+ * tailored to the musical style of the current station / instrument
+ * and to the transition execution mode (drop / bridge / morph).
  * Connects the outgoing scale/voicing to the incoming target key.
  */
 export function generateMelodicFiller(
@@ -10,9 +11,30 @@ export function generateMelodicFiller(
   instrument: InstrumentId,
   fromRoot: number,
   toRoot: number,
-  targetScale: number[]
+  targetScale: number[],
+  mode: 'drop' | 'bridge' | 'morph' = 'bridge'
 ): (number | null)[] {
   const filler: (number | null)[] = new Array(16).fill(null);
+
+  if (mode === 'morph') {
+    // Sparse drifting whole notes — the dissolve whisper line.
+    // Floats from the old octave down toward the new key landing.
+    filler[0] = fromRoot + 12;
+    filler[4] = toRoot + targetScale[2 % targetScale.length] + 12;
+    filler[8] = toRoot + targetScale[4 % targetScale.length];
+    filler[12] = toRoot + 7;
+    return filler;
+  }
+
+  if (mode === 'drop' && stationId !== 'phonk' && stationId !== 'arcade') {
+    // Impact stinger: accelerating 16th run into the target root, choke at the end
+    for (let s = 0; s < 14; s++) {
+      const oct = Math.floor(s / targetScale.length);
+      filler[s] = toRoot + targetScale[s % targetScale.length] + oct * 12;
+    }
+    // 14-15 silence before the drop
+    return filler;
+  }
 
   if (stationId === 'sad' || instrument === 'piano') {
     // 1. Concert Piano: Poignant Pause -> Rapid Scalar Arpeggio Run -> High Landing
