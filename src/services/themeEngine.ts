@@ -102,6 +102,12 @@ const STATION_PALETTES: Record<string, { hueShift: number; satMul: number; litMu
     litMul: 0.88,
     accOverride: [215, 65, 70],
   },
+  cosmos: {
+    hueShift: -55,      // Deep obsidian space & emerald nebula glow
+    satMul: 0.85,
+    litMul: 0.72,
+    accOverride: [165, 85, 65],
+  },
   auto: {
     hueShift: 0,
     satMul: 1.0,

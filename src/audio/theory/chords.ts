@@ -71,6 +71,12 @@ export const GENRE_PROGRESSIONS: Record<string, number[][]> = {
     [5, 0, 2, 4], // VI - i - iii - v (tearful melancholic lift)
     [0, 3, 5, 4], // i - iv - VI - v (classic poignant lament)
     [3, 0, 4, 0]  // iv - i - V - i (heartbreaking classical resolution)
+  ],
+  cosmos: [
+    [0, 1, 0, 3], // I - II - I - IV (Brian Eno Lydian weightless float)
+    [0, 3, 1, 4], // I - IV - II - V (ascending cosmic shimmer)
+    [0, 2, 4, 2], // I - III - V - III (stellar harmonic rise & fall)
+    [0, 1, 3, 0]  // I - II - IV - I (endless space drone resolution)
   ]
 };
 

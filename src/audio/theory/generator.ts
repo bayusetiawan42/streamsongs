@@ -170,6 +170,23 @@ export const STATIONS: Station[] = [
     preferredInstrument: 'piano',
     a: ['Tears', 'Silent', 'Forgotten', 'Lost', 'Melancholy', 'Distant', 'Fading', 'Lonely', 'Echoing', 'Fragile'],
     b: ['Memories', 'Raindrops', 'Letters', 'Goodbye', 'Sorrow', 'Autumn', 'Whisper', 'Silence', 'Passage', 'Solitude']
+  },
+  {
+    id: 'cosmos',
+    name: 'Deep Cosmos',
+    icon: 'fa-ring',
+    desc: 'Brian Eno shimmer pads, Lydian drones & weightless space ambient',
+    h: 235,
+    sc: ['lydian', 'dorian'],
+    bpm: [48, 62],
+    w: ['sine'],
+    dr: 0,
+    den: 0.2,
+    cut: 900,
+    wet: 2.0,
+    preferredInstrument: 'space',
+    a: ['Void', 'Nebula', 'Stellar', 'Cosmic', 'Infinite', 'Quantum', 'Gravity', 'Pulsar', 'Obsidian', 'Celestial'],
+    b: ['Drift', 'Field', 'Horizon', 'Resonance', 'Expanse', 'Shimmer', 'Ascent', 'Orbit', 'Singularity', 'Depth']
   }
 ];
 
@@ -491,6 +508,14 @@ export function generateTrack(
           n = rootChordNote + 7; // Poignant high emotional fifth lift
         } else {
           n = null;
+        }
+      } else if (station.id === 'cosmos') {
+        // Brian Eno / Carbon Based Lifeforms: sparse floating single notes on downbeats only
+        if (s === 0 || s === 6 || s === 10) {
+          const spacialTones = [0, 4, 7, 11];
+          n = rootChordNote + spacialTones[(b + s) % spacialTones.length];
+        } else {
+          n = null; // vast silence = the music of space
         }
       } else if (isDownbeat) {
         // Strong resolution to chord tone

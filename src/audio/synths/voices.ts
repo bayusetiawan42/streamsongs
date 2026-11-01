@@ -63,6 +63,9 @@ export class VoiceManager {
       case 'piano':
         this.playConcertPiano(freq, time, duration, velocity, cutoff, wetSend, dryBus);
         break;
+      case 'space':
+        this.playSpaceDrone(freq, time, duration, velocity, cutoff, wetSend, dryBus);
+        break;
       default:
         this.playRhodes(freq, time, duration, velocity, cutoff, wetSend, dryBus);
     }
@@ -537,6 +540,60 @@ export class VoiceManager {
     osc2.stop(t + dur + 1.25);
   }
 
+  // 11. Deep Cosmos Space Drone (Brian Eno / Carbon Based Lifeforms)
+  private playSpaceDrone(
+    f: number, t: number, dur: number, vel: number, cut: number,
+    wet: GainNode, dry: GainNode
+  ) {
+    const c = this.ctx;
+    // Shimmer pad: two slightly detuned sine drones with slow beating
+    const osc1 = c.createOscillator();
+    const osc2 = c.createOscillator();
+    const filter = c.createBiquadFilter();
+    const env = c.createGain();
+
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(f * 0.998, t);   // -3 cents (slow cosmic beating)
+
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(f * 1.002, t);   // +3 cents (slow cosmic beating)
+
+    // Slow harmonic morph: octave harmonic sine
+    const osc3 = c.createOscillator();
+    osc3.type = 'sine';
+    osc3.frequency.setValueAtTime(f * 2.0, t);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(Math.min(cut * 0.6, 1200), t);
+    filter.Q.value = 0.5;
+
+    const gainVal = 0.07 * vel;
+    env.gain.setValueAtTime(0.0001, t);
+    // Eno-style glacial attack (2s swell)
+    env.gain.linearRampToValueAtTime(gainVal, t + 2.0);
+    env.gain.setValueAtTime(gainVal, t + Math.max(2.5, dur));
+    env.gain.exponentialRampToValueAtTime(0.0001, t + dur + 3.0);
+
+    osc1.connect(filter);
+    osc2.connect(filter);
+    osc3.connect(filter);
+    filter.connect(env);
+    env.connect(dry);
+
+    // Wash of deep infinite space reverb
+    const wetTap = c.createGain();
+    wetTap.gain.value = 0.95;
+    env.connect(wetTap);
+    wetTap.connect(wet);
+
+    osc1.start(t);
+    osc2.start(t);
+    osc3.start(t);
+    osc1.stop(t + dur + 3.1);
+    osc2.stop(t + dur + 3.1);
+    osc3.stop(t + dur + 3.1);
+  }
+
   /**
    * Instrument-Adaptive Pad & Harmonic Drone Voice
    * Adjusts oscillator waveforms, filter behavior, attack/decay envelopes,
@@ -978,6 +1035,47 @@ export class VoiceManager {
         break;
       }
 
+      // 11. Deep Cosmos: Infinite Shimmer Pad with Lydian Drone (Brian Eno style)
+      case 'space': {
+        const d1 = c.createOscillator();
+        const d2 = c.createOscillator();
+        const filter = c.createBiquadFilter();
+        const env = c.createGain();
+
+        d1.type = 'sine';
+        d1.frequency.setValueAtTime(freq * 0.999, t); // -2 cents slow cosmic beat
+
+        d2.type = 'sine';
+        d2.frequency.setValueAtTime(freq * 1.001, t); // +2 cents slow cosmic beat
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(Math.min(cutoff * 0.55, 1000), t);
+        filter.Q.value = 0.4;
+
+        env.gain.setValueAtTime(0.0001, t);
+        env.gain.linearRampToValueAtTime(baseGain * 1.1, t + 1.8); // Eno slow swell
+        env.gain.setValueAtTime(baseGain * 1.1, hold);
+        env.gain.exponentialRampToValueAtTime(0.0001, hold + 3.5);
+
+        d1.connect(filter);
+        d2.connect(filter);
+        filter.connect(env);
+        env.connect(dryBus);
+
+        if (wetAmt > 0) {
+          const s = c.createGain();
+          s.gain.value = wetAmt * 0.98;
+          env.connect(s);
+          s.connect(wetSend);
+        }
+
+        d1.start(t);
+        d2.start(t);
+        d1.stop(hold + 3.6);
+        d2.stop(hold + 3.6);
+        break;
+      }
+
       // Fallback
       default: {
         const osc = c.createOscillator();
@@ -1193,6 +1291,22 @@ export class VoiceManager {
         env.gain.linearRampToValueAtTime(gain, t + 0.005);
         env.gain.exponentialRampToValueAtTime(gain * 0.5, t + 0.35);
         env.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.8);
+        break;
+      }
+
+      // 11. Deep Cosmos Space: Slow sine sub drone (Brian Eno / ambient bass)
+      case 'space': {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t);
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(220, t);
+
+        const gain = 0.2;
+        env.gain.setValueAtTime(0.0001, t);
+        env.gain.linearRampToValueAtTime(gain, t + 1.5); // extremely slow swell
+        env.gain.setValueAtTime(gain, t + Math.max(2.0, dur * 0.8));
+        env.gain.exponentialRampToValueAtTime(0.0001, t + dur + 2.5);
         break;
       }
 

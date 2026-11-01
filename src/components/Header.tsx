@@ -47,6 +47,7 @@ const INSTRUMENT_OPTIONS: { id: InstrumentId; name: string; icon: string; desc: 
   { id: 'organ', name: 'Pipe Organ', icon: 'fa-church', desc: 'Cathedral pipe organ with majestic acoustic resonance' },
   { id: 'cowbell', name: '808 Cowbell', icon: 'fa-bell', desc: 'Metallic Memphis tuned 808 cowbell with punchy phonk attack' },
   { id: 'piano', name: 'Concert Piano', icon: 'fa-music', desc: 'Acoustic grand piano with emotional resonance & hammer action' },
+  { id: 'space', name: 'Shimmer Drone', icon: 'fa-ring', desc: 'Brian Eno infinite shimmer pads & Lydian cosmos drone' },
 ];
 
 export const Header: React.FC<HeaderProps> = ({
