@@ -155,4 +155,5 @@ export interface Deck {
   dry: GainNode;
   wet: GainNode;
   next?: Track;
+  bridge?: any;
 }

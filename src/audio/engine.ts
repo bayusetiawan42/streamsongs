@@ -3,7 +3,22 @@ import { VoiceManager } from './synths/voices';
 import { AmbientEngine } from './ambient';
 import { SamplerManager } from './sampler/samplerManager';
 import { generateTrack, STATIONS } from './theory/generator';
-import { m2f, NOTE_NAMES } from './theory/scales';
+import { m2f, NOTE_NAMES, SCALES, ScaleName } from './theory/scales';
+import { planModulation, ModulationPath } from './theory/modulation';
+import { generateMelodicFiller } from './theory/fillers';
+import { getDrumFillStep } from './theory/drumFills';
+
+export interface TransitionBridge {
+  barStart: number;
+  barsTotal: number;
+  modulation: ModulationPath;
+  melodicFiller: (number | null)[];
+  startBpm: number;
+  targetBpm: number;
+  targetKey: { pc: number; scn: string };
+  reason: 'key' | 'bpm' | 'station' | 'track_end';
+  completed?: boolean;
+}
 
 export class AudioEngine {
   public ctx: AudioContext | null = null;
@@ -47,6 +62,7 @@ export class AudioEngine {
   // Listeners
   public onTrackChange?: (track: Track) => void;
   public onPlayStateChange?: (playing: boolean) => void;
+  public onTransitionChange?: (inTransition: boolean, description?: string) => void;
 
   public init() {
     if (this.ctx) return;
@@ -225,18 +241,156 @@ export class AudioEngine {
 
   private stepDuration(D: Deck): number {
     const T = D.tr;
-    const total = T.bars * 16;
     let b = T.bpm;
-    if (D.next && D.step >= total - 128) {
+
+    // Metric BPM interpolation during transition bridge
+    if (D.bridge && D.bridge.startBpm !== D.bridge.targetBpm) {
+      const stepStart = D.bridge.barStart * 16;
+      const stepEnd = stepStart + D.bridge.barsTotal * 16;
+      if (D.step >= stepStart && D.step < stepEnd) {
+        const progress = (D.step - stepStart) / (stepEnd - stepStart);
+        b = D.bridge.startBpm + (D.bridge.targetBpm - D.bridge.startBpm) * progress;
+      }
+    } else if (D.next && D.step >= T.bars * 16 - 128) {
+      const total = T.bars * 16;
       b = T.bpm + (D.next.bpm - T.bpm) * Math.min(1, (D.step - (total - 128)) / 64);
     }
+
     return 60 / b / 4;
   }
 
   private playStep(D: Deck, s: number, t: number, sd: number) {
     const st = s % 16;
+    const bar = Math.floor(s / 16);
+    const bridge: TransitionBridge | undefined = D.bridge;
+    const isBridging = !!(bridge && bar >= bridge.barStart && bar < (bridge.barStart + bridge.barsTotal));
+    const isLandingBar = !!(bridge && bar >= (bridge.barStart + bridge.barsTotal) && st === 0 && !bridge.completed);
 
-    // Smooth harmonic transition on bar 1 beat 1
+    // 1. THE DROP / LANDING IMPACT on step 0 of new section!
+    if (isLandingBar && bridge) {
+      bridge.completed = true;
+      const { pc, scn } = bridge.targetKey;
+      D.tr.pc = pc;
+      D.tr.root = 48 + pc;
+      D.tr.rootName = NOTE_NAMES[pc];
+      D.tr.scn = scn;
+      D.tr.scale = scn;
+      D.tr.key = `${NOTE_NAMES[pc]} ${scn}`;
+      D.tr.bpm = bridge.targetBpm;
+      if (D.next) {
+        D.next.pc = pc;
+        D.next.root = 48 + pc;
+        D.next.rootName = NOTE_NAMES[pc];
+        D.next.scn = scn;
+        D.next.scale = scn;
+        D.next.key = `${NOTE_NAMES[pc]} ${scn}`;
+      }
+      D.bridge = null;
+      this.pendingKeyChange = null;
+      this.onTrackChange?.(D.tr);
+      this.onTransitionChange?.(false);
+
+      // Downbeat impact: heavy kick punch + sub-impact
+      if (!this.samplers.playTr808Drum('kick', t, 1.0)) {
+        this.voices.playKick(t, 1.0, D.dry);
+      }
+      if (D.tr.stId === 'phonk') {
+        this.samplers.playTr808Drum('clap', t, 0.9);
+      }
+    }
+
+    // 2. GENERATIVE BRIDGE FILLER EXECUTION
+    if (isBridging && bridge) {
+      const bridgeStep = (s - bridge.barStart * 16) % 16;
+      const activeInst = this.prefInstrument !== 'auto' ? this.prefInstrument : D.tr.instrument;
+
+      // A. Bridge Chords (Pivot / Secondary Dominant) on step 0 of bridge
+      if (bridgeStep === 0) {
+        bridge.modulation.bridgeVoicing.forEach((midi, i) => {
+          const freq = m2f(midi);
+          let handled = false;
+          if (activeInst === 'piano') {
+            handled = this.samplers.playCello(midi - 12, t, sd * 14, 0.85);
+          } else if (activeInst === 'space') {
+            handled = this.samplers.playPad(midi, t, sd * 14, 0.8);
+          }
+          if (!handled) {
+            this.voices.playPadChord(
+              activeInst,
+              freq,
+              t,
+              sd * 14,
+              i,
+              D.tr.cut * 1.25,
+              0.8 * D.tr.wet,
+              D.wet,
+              D.dry
+            );
+          }
+        });
+      }
+
+      // B. Bridge Bass (Voice-led pathway)
+      if (bridgeStep === 0 || bridgeStep === 8) {
+        const bassMidi = bridgeStep === 0 ? bridge.modulation.bridgeBass[0] : bridge.modulation.bridgeBass[1];
+        this.voices.playBassNote(activeInst, m2f(bassMidi), t, sd * 7.0, false, D.dry);
+      }
+
+      // C. Bridge Melodic Filler
+      const fillNote = bridge.melodicFiller[bridgeStep];
+      if (fillNote !== null) {
+        const freq = m2f(fillNote);
+        let handled = false;
+        if (activeInst === 'cowbell') {
+          handled = this.samplers.playPhonkCowbell(fillNote, t, sd * 1.2, 0.95);
+        } else if (activeInst === 'piano') {
+          handled = this.samplers.playPiano(fillNote, t, sd * 1.5, 0.95);
+        } else if (activeInst === 'organ') {
+          handled = this.samplers.playOrgan(fillNote, t, sd * 1.5, 0.95);
+        } else if (activeInst === 'rhodes') {
+          handled = this.samplers.playRhodes(fillNote, t, sd * 1.6, 0.9);
+        } else if (activeInst === 'space') {
+          handled = this.samplers.playPad(fillNote, t, sd * 2.5, 0.85);
+        }
+
+        if (!handled) {
+          this.voices.playMelodicNote(
+            activeInst,
+            freq,
+            t,
+            sd * 1.5,
+            0.92,
+            D.tr.cut * 1.3,
+            D.wet,
+            D.dry
+          );
+        }
+      }
+
+      // D. Bridge Drum Riser & Pre-Drop Choke
+      const fill = getDrumFillStep(D.tr.dr, bridgeStep, D.tr.stId);
+      if (!fill.isChoke) {
+        if (fill.kick) {
+          if (!this.samplers.playTr808Drum('kick', t, fill.kickVol)) {
+            this.voices.playKick(t, fill.kickVol, D.dry);
+          }
+        }
+        if (fill.snare) {
+          if (!this.samplers.playTr808Drum('snare', t, fill.snareVol)) {
+            this.voices.playNoiseHit(t, 0.16, fill.snareVol * 0.45, 'bandpass', 1900, D.dry);
+          }
+        }
+        if (fill.hihat) {
+          if (!this.samplers.playTr808Drum('hihat', t, fill.hihatVol)) {
+            this.voices.playNoiseHit(t, 0.035, fill.hihatVol * 0.12, 'highpass', 7600, D.dry);
+          }
+        }
+      }
+
+      return; // Bridge step handled!
+    }
+
+    // Fallback instant harmonic transition if no bridge queued
     if (st === 0 && this.pendingKeyChange) {
       const { pc, scn } = this.pendingKeyChange;
       D.tr.pc = pc;
@@ -258,7 +412,6 @@ export class AudioEngine {
     }
 
     const T = D.tr;
-    const bar = Math.floor(s / 16);
     const chordIndex = bar % 4;
     const voicing = T.voicings[chordIndex] || [T.root, T.root + 7];
 
@@ -418,6 +571,9 @@ export class AudioEngine {
       while (D.nt < lim && D.step < total) {
         if (!D.queued && D.stopAt === Infinity && D.step === total - 64) {
           D.queued = true;
+          if (D.next && (D.next.pc !== D.tr.pc || D.next.scn !== D.tr.scn)) {
+            this.triggerDeckOutroBridge(D, D.next, 2);
+          }
           const xf = 960 / (D.next ? D.next.bpm : D.tr.bpm);
           this.fadeOutDeck(D, D.nt, xf);
           if (D.next) this.startDeck(D.next, D.nt, xf);
@@ -455,6 +611,151 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Generative Harmonic Modulation Bridge:
+   * Queues a 1-bar or 2-bar musical bridge that calculates pivot chords,
+   * melodic runs, and drum risers to seamlessly transform into targetKey.
+   */
+  public triggerKeyModulationBridge(targetKey: { pc: number; scn: string }, bridgeBars = 1) {
+    let anyQueued = false;
+    for (const D of this.decks) {
+      if (D.stopAt < Infinity) continue;
+      const currentBar = Math.floor(D.step / 16);
+      const nextBarStart = currentBar + 1;
+      const currentVoicing = D.tr.voicings[(currentBar) % 4] || [D.tr.root, D.tr.root + 7];
+      const targetRoot = 48 + targetKey.pc;
+      const targetScale = SCALES[targetKey.scn as ScaleName] || SCALES.minor;
+
+      const modulation = planModulation(
+        D.tr.root,
+        D.tr.pc,
+        D.tr.scn,
+        targetRoot,
+        targetKey.pc,
+        targetKey.scn,
+        currentVoicing
+      );
+
+      const activeInst = this.prefInstrument !== 'auto' ? this.prefInstrument : D.tr.instrument;
+      const melodicFiller = generateMelodicFiller(
+        D.tr.stId,
+        activeInst,
+        D.tr.root,
+        targetRoot,
+        targetScale
+      );
+
+      D.bridge = {
+        barStart: nextBarStart,
+        barsTotal: bridgeBars,
+        modulation,
+        melodicFiller,
+        startBpm: D.tr.bpm,
+        targetBpm: D.tr.bpm,
+        targetKey,
+        reason: 'key'
+      };
+      anyQueued = true;
+    }
+
+    if (anyQueued) {
+      this.onTransitionChange?.(true, `Modulating to ${NOTE_NAMES[targetKey.pc]} ${targetKey.scn}`);
+    }
+  }
+
+  /**
+   * Metric BPM Bridge:
+   * Smoothly interpolates the tempo over 1 bar while playing a drum riser & scalar filler.
+   */
+  public triggerBpmBridge(targetBpm: number, bridgeBars = 1) {
+    let anyQueued = false;
+    for (const D of this.decks) {
+      if (D.stopAt < Infinity) continue;
+      const currentBar = Math.floor(D.step / 16);
+      const nextBarStart = currentBar + 1;
+      const currentVoicing = D.tr.voicings[(currentBar) % 4] || [D.tr.root, D.tr.root + 7];
+      const targetScale = SCALES[D.tr.scn as ScaleName] || SCALES.minor;
+
+      const modulation = planModulation(
+        D.tr.root,
+        D.tr.pc,
+        D.tr.scn,
+        D.tr.root,
+        D.tr.pc,
+        D.tr.scn,
+        currentVoicing
+      );
+
+      const activeInst = this.prefInstrument !== 'auto' ? this.prefInstrument : D.tr.instrument;
+      const melodicFiller = generateMelodicFiller(
+        D.tr.stId,
+        activeInst,
+        D.tr.root,
+        D.tr.root,
+        targetScale
+      );
+
+      D.bridge = {
+        barStart: nextBarStart,
+        barsTotal: bridgeBars,
+        modulation,
+        melodicFiller,
+        startBpm: D.tr.bpm,
+        targetBpm,
+        targetKey: { pc: D.tr.pc, scn: D.tr.scn },
+        reason: 'bpm'
+      };
+      anyQueued = true;
+    }
+
+    if (anyQueued) {
+      this.onTransitionChange?.(true, `Ramping tempo to ${targetBpm} BPM`);
+    }
+  }
+
+  /**
+   * Outro Bridge for Seamless Song Crossfading:
+   * Outgoing deck harmonically modulates into the incoming deck's key over 2 bars.
+   */
+  public triggerDeckOutroBridge(D: Deck, nextTrack: Track, bridgeBars = 2) {
+    const currentBar = Math.floor(D.step / 16);
+    const nextBarStart = currentBar + 1;
+    const currentVoicing = D.tr.voicings[(currentBar) % 4] || [D.tr.root, D.tr.root + 7];
+    const targetScale = SCALES[nextTrack.scn as ScaleName] || SCALES.minor;
+
+    const modulation = planModulation(
+      D.tr.root,
+      D.tr.pc,
+      D.tr.scn,
+      nextTrack.root,
+      nextTrack.pc,
+      nextTrack.scn,
+      currentVoicing
+    );
+
+    const activeInst = this.prefInstrument !== 'auto' ? this.prefInstrument : D.tr.instrument;
+    const melodicFiller = generateMelodicFiller(
+      D.tr.stId,
+      activeInst,
+      D.tr.root,
+      nextTrack.root,
+      targetScale
+    );
+
+    D.bridge = {
+      barStart: nextBarStart,
+      barsTotal: bridgeBars,
+      modulation,
+      melodicFiller,
+      startBpm: D.tr.bpm,
+      targetBpm: nextTrack.bpm,
+      targetKey: { pc: nextTrack.pc, scn: nextTrack.scn },
+      reason: 'track_end'
+    };
+
+    this.onTransitionChange?.(true, `Bridging to next track in ${nextTrack.key}`);
+  }
+
   public tuneStation(st: Station) {
     this.station = st;
     this.samplers?.preloadForStation(st.id, this.prefInstrument);
@@ -478,6 +779,9 @@ export class AudioEngine {
 
   public setBpm(bpm: number | null | 'default') {
     this.prefBpm = bpm === null ? 'default' : bpm;
+    if (typeof bpm === 'number' && this.playing && this.decks.length > 0) {
+      this.triggerBpmBridge(bpm, 1);
+    }
   }
 
   public setKey(pc: number | null, scn: string | null) {
@@ -486,15 +790,19 @@ export class AudioEngine {
       this.pendingKeyChange = null;
     } else {
       this.prefKey = { pc, scn };
-      this.pendingKeyChange = { pc, scn };
-      if (this.currentTrack) {
-        this.currentTrack.pc = pc;
-        this.currentTrack.root = 48 + pc;
-        this.currentTrack.rootName = NOTE_NAMES[pc];
-        this.currentTrack.scn = scn;
-        this.currentTrack.scale = scn;
-        this.currentTrack.key = `${NOTE_NAMES[pc]} ${scn}`;
-        this.onTrackChange?.(this.currentTrack);
+      if (this.playing && this.decks.length > 0) {
+        this.triggerKeyModulationBridge({ pc, scn }, 1);
+      } else {
+        this.pendingKeyChange = { pc, scn };
+        if (this.currentTrack) {
+          this.currentTrack.pc = pc;
+          this.currentTrack.root = 48 + pc;
+          this.currentTrack.rootName = NOTE_NAMES[pc];
+          this.currentTrack.scn = scn;
+          this.currentTrack.scale = scn;
+          this.currentTrack.key = `${NOTE_NAMES[pc]} ${scn}`;
+          this.onTrackChange?.(this.currentTrack);
+        }
       }
     }
   }
