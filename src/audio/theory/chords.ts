@@ -59,6 +59,12 @@ export const GENRE_PROGRESSIONS: Record<string, number[][]> = {
     [0, 3, 5, 4], // i - iv - VI - v (soaring space crescendo)
     [5, 0, 3, 4], // VI - i - iv - v (gravitational pull)
     [0, 2, 3, 4]  // i - III - iv - v (epic modal climb)
+  ],
+  phonk: [
+    [0, 5, 0, 1], // i - VI - i - bII (classic dark Phrygian phonk shift)
+    [0, 6, 5, 6], // i - VII - VI - VII (driving Memphis drift)
+    [0, 3, 5, 0], // i - iv - VI - i
+    [0, 5, 6, 5]  // i - VI - VII - VI
   ]
 };
 

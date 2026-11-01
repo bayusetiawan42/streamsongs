@@ -90,6 +90,12 @@ const STATION_PALETTES: Record<string, { hueShift: number; satMul: number; litMu
     litMul: 0.88,
     accOverride: [42, 95, 62],
   },
+  phonk: {
+    hueShift: 110,      // Intense neon crimson & Tokyo drift ultraviolet
+    satMul: 1.35,
+    litMul: 0.95,
+    accOverride: [340, 95, 62],
+  },
   auto: {
     hueShift: 0,
     satMul: 1.0,

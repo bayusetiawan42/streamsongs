@@ -57,6 +57,9 @@ export class VoiceManager {
       case 'organ':
         this.playPipeOrgan(freq, time, duration, velocity, cutoff, wetSend, dryBus);
         break;
+      case 'cowbell':
+        this.playPhonkCowbell(freq, time, duration, velocity, cutoff, wetSend, dryBus);
+        break;
       default:
         this.playRhodes(freq, time, duration, velocity, cutoff, wetSend, dryBus);
     }
@@ -435,6 +438,52 @@ export class VoiceManager {
     rank3.stop(t + dur + 0.6);
   }
 
+  // 9. Roland TR-808 Tuned Cowbell (Phonk Style: DVRST, Kordhell)
+  private playPhonkCowbell(
+    f: number, t: number, dur: number, vel: number, cut: number,
+    wet: GainNode, dry: GainNode
+  ) {
+    const c = this.ctx;
+    // Standard 808 cowbell fundamental ratios (540 Hz and 800 Hz)
+    const ratio = f / 261.63; // relative to middle C
+    const osc1 = c.createOscillator();
+    const osc2 = c.createOscillator();
+    const filter = c.createBiquadFilter();
+    const env = c.createGain();
+
+    osc1.type = 'square';
+    osc1.frequency.setValueAtTime(540 * ratio, t);
+
+    osc2.type = 'square';
+    osc2.frequency.setValueAtTime(800 * ratio, t);
+
+    // Resonant bandpass filter creates the signature metallic "tink"
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(Math.min(cut * 1.6, 750 * ratio), t);
+    filter.Q.value = 4.2;
+
+    const gainVal = 0.085 * vel;
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.linearRampToValueAtTime(gainVal, t + 0.002);
+    // Punchy exponential decay
+    env.gain.exponentialRampToValueAtTime(0.0001, t + Math.min(0.24, Math.max(0.12, dur)));
+
+    osc1.connect(filter);
+    osc2.connect(filter);
+    filter.connect(env);
+    env.connect(dry);
+
+    const wetTap = c.createGain();
+    wetTap.gain.value = 0.35;
+    env.connect(wetTap);
+    wetTap.connect(wet);
+
+    osc1.start(t);
+    osc2.start(t);
+    osc1.stop(t + 0.3);
+    osc2.stop(t + 0.3);
+  }
+
   /**
    * Instrument-Adaptive Pad & Harmonic Drone Voice
    * Adjusts oscillator waveforms, filter behavior, attack/decay envelopes,
@@ -803,6 +852,39 @@ export class VoiceManager {
         break;
       }
 
+      // 9. Phonk Dark Memphis Brass Pad
+      case 'cowbell': {
+        const o1 = c.createOscillator();
+        const filter = c.createBiquadFilter();
+        const env = c.createGain();
+
+        o1.type = 'sawtooth';
+        o1.frequency.setValueAtTime(freq, t);
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(Math.min(cutoff * 0.85, 1600), t);
+
+        env.gain.setValueAtTime(0.0001, t);
+        env.gain.linearRampToValueAtTime(baseGain * 0.9, t + 0.1);
+        env.gain.setValueAtTime(baseGain * 0.9, hold);
+        env.gain.exponentialRampToValueAtTime(0.0001, hold + 0.8);
+
+        o1.connect(filter);
+        filter.connect(env);
+        env.connect(dryBus);
+
+        if (wetAmt > 0) {
+          const s = c.createGain();
+          s.gain.value = wetAmt * 0.4;
+          env.connect(s);
+          s.connect(wetSend);
+        }
+
+        o1.start(t);
+        o1.stop(hold + 0.9);
+        break;
+      }
+
       // Fallback
       default: {
         const osc = c.createOscillator();
@@ -984,6 +1066,24 @@ export class VoiceManager {
         env.gain.linearRampToValueAtTime(gain, t + 0.04);
         env.gain.setValueAtTime(gain * 0.9, t + Math.max(0.1, dur * 0.8));
         env.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.4);
+        break;
+      }
+
+      // 9. Phonk Saturated 808 Sub-bass with Pitch Drop
+      case 'cowbell': {
+        osc.type = 'sine';
+        // 808 punchy pitch-drop attack (starts ~35Hz higher and drops in 22ms)
+        osc.frequency.setValueAtTime(freq + 35, t);
+        osc.frequency.exponentialRampToValueAtTime(freq, t + 0.022);
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(380, t);
+
+        const gain = 0.38; // Heavy saturated 808 presence
+        env.gain.setValueAtTime(0.0001, t);
+        env.gain.linearRampToValueAtTime(gain, t + 0.006);
+        env.gain.setValueAtTime(gain * 0.85, t + Math.max(0.08, dur * 0.7));
+        env.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.15);
         break;
       }
 

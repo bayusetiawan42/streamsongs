@@ -45,6 +45,7 @@ const INSTRUMENT_OPTIONS: { id: InstrumentId; name: string; icon: string; desc: 
   { id: 'synthwave', name: 'Synthwave Lead', icon: 'fa-bolt', desc: 'Punchy 80s detuned saw lead' },
   { id: 'chiptune', name: '8-Bit Chiptune', icon: 'fa-gamepad', desc: 'Classic retro square waves' },
   { id: 'organ', name: 'Pipe Organ', icon: 'fa-church', desc: 'Cathedral pipe organ with majestic acoustic resonance' },
+  { id: 'cowbell', name: '808 Cowbell', icon: 'fa-bell', desc: 'Metallic Memphis tuned 808 cowbell with punchy phonk attack' },
 ];
 
 export const Header: React.FC<HeaderProps> = ({

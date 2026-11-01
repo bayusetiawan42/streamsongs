@@ -309,15 +309,28 @@ export class AudioEngine {
 
     // 4. Play Drums
     if (T.dr && T.drOn[bar]) {
-      if (T.kick.includes(st)) {
-        this.voices.playKick(t, T.dr === 2 ? 0.7 : 0.45, D.dry);
-      }
-      if (T.dr === 2 && (st === 4 || st === 12)) {
-        this.voices.playNoiseHit(t, 0.18, 0.28, 'bandpass', 1850, D.dry);
-      }
-      if (T.dr === 2 ? st % 2 === 0 : st % 4 === 2) {
-        const hVol = st % 4 === 2 ? 0.09 : 0.055;
-        this.voices.playNoiseHit(t, 0.04, hVol, 'highpass', 7200, D.dry);
+      if (T.dr === 3) {
+        // Phonk Trap Beat: Punchy kick syncopations, half-time snare on 8, rapid hats
+        if ([0, 6, 10].includes(st)) {
+          this.voices.playKick(t, 0.85, D.dry);
+        }
+        if (st === 8) {
+          this.voices.playNoiseHit(t, 0.22, 0.42, 'bandpass', 1600, D.dry);
+        }
+        // Rapid 16th trap hats with velocity dynamics
+        const hVol = st % 2 === 0 ? 0.11 : 0.07;
+        this.voices.playNoiseHit(t, 0.035, hVol, 'highpass', 7800, D.dry);
+      } else {
+        if (T.kick.includes(st)) {
+          this.voices.playKick(t, T.dr === 2 ? 0.7 : 0.45, D.dry);
+        }
+        if (T.dr === 2 && (st === 4 || st === 12)) {
+          this.voices.playNoiseHit(t, 0.18, 0.28, 'bandpass', 1850, D.dry);
+        }
+        if (T.dr === 2 ? st % 2 === 0 : st % 4 === 2) {
+          const hVol = st % 4 === 2 ? 0.09 : 0.055;
+          this.voices.playNoiseHit(t, 0.04, hVol, 'highpass', 7200, D.dry);
+        }
       }
     }
   }

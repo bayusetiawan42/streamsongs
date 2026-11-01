@@ -135,6 +135,24 @@ export const STATIONS: Station[] = [
     preferredInstrument: 'organ',
     a: ['Gargantua', 'Cornfield', 'Day One', 'Event', 'Endless', 'Cosmic', 'Solar', 'Infinity', 'Stellar', 'Gravitational'],
     b: ['Horizon', 'Chase', 'Wormhole', 'Tears', 'Singularity', 'Orbit', 'Ascent', 'Echoes', 'Drift', 'Tides']
+  },
+  {
+    id: 'phonk',
+    name: 'Drift Phonk',
+    icon: 'fa-gauge-high',
+    desc: '808 cowbell riffs, saturated sub glides & Tokyo night drift',
+    h: 330,
+    sc: ['phrygian', 'pentatonic_minor', 'minor'],
+    bpm: [136, 150],
+    w: ['square', 'sawtooth'],
+    dr: 3,
+    den: 0.85,
+    cut: 3400,
+    wet: 0.65,
+    pulse: 1,
+    preferredInstrument: 'cowbell',
+    a: ['Tokyo', 'Drift', 'Midnight', 'Phantom', 'Ghost', 'Shadow', 'Underground', 'Velocity', 'Neon', 'Demon'],
+    b: ['Run', 'Echo', 'Takedown', 'Streets', 'Highway', 'Slide', 'Overdrive', 'Shift', 'Smoke', 'Outrun']
   }
 ];
 
@@ -437,6 +455,15 @@ export function generateTrack(
         const ostinato = [0, 2, 4, 7, 4, 2, 0, 2, 4, 7, 9, 7, 4, 2, 4, 2];
         const stepDeg = ostinato[s % ostinato.length];
         n = rootChordNote + stepDeg;
+      } else if (station.id === 'phonk') {
+        // Syncopated 808 cowbell riff (DVRST / Kordhell style)
+        const phonkHit = [0, 3, 6, 8, 10, 12, 14].includes(s);
+        if (phonkHit) {
+          const riff = [0, 3, 5, 7, 10, 12, 7, 5];
+          n = rootChordNote + riff[(s + b * 2) % riff.length];
+        } else {
+          n = null;
+        }
       } else if (isDownbeat) {
         // Strong resolution to chord tone
         n = r() < 0.85 ? rootChordNote + pick([0, 2, 4]) : null;
