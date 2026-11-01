@@ -91,7 +91,8 @@ export class AudioEngine {
     this.analyser.connect(this.ctx.destination);
 
     this.voices = new VoiceManager(this.ctx);
-    this.ambient = new AmbientEngine(this.ctx, this.comp);
+    // Connect ambient to master bus (post-compressor) so weather noise doesn't trigger sidechain pumping on music
+    this.ambient = new AmbientEngine(this.ctx, this.master);
 
     this.ambient.setMute(this.weatherEffectsMuted);
     this.ambient.updateAmbient(this.weatherCat, this.windSpeed, true);
