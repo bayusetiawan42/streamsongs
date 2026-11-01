@@ -153,6 +153,23 @@ export const STATIONS: Station[] = [
     preferredInstrument: 'cowbell',
     a: ['Tokyo', 'Drift', 'Midnight', 'Phantom', 'Ghost', 'Shadow', 'Underground', 'Velocity', 'Neon', 'Demon'],
     b: ['Run', 'Echo', 'Takedown', 'Streets', 'Highway', 'Slide', 'Overdrive', 'Shift', 'Smoke', 'Outrun']
+  },
+  {
+    id: 'sad',
+    name: 'Melancholic Piano',
+    icon: 'fa-cloud-rain',
+    desc: 'Emotional grand piano, Einaudi chords & gentle string ensemble',
+    h: 215,
+    sc: ['harmonic_minor', 'minor', 'dorian'],
+    bpm: [62, 78],
+    w: ['triangle', 'sine'],
+    dr: 0,
+    den: 0.55,
+    cut: 2400,
+    wet: 1.6,
+    preferredInstrument: 'piano',
+    a: ['Tears', 'Silent', 'Forgotten', 'Lost', 'Melancholy', 'Distant', 'Fading', 'Lonely', 'Echoing', 'Fragile'],
+    b: ['Memories', 'Raindrops', 'Letters', 'Goodbye', 'Sorrow', 'Autumn', 'Whisper', 'Silence', 'Passage', 'Solitude']
   }
 ];
 
@@ -461,6 +478,17 @@ export function generateTrack(
         if (phonkHit) {
           const riff = [0, 3, 5, 7, 10, 12, 7, 5];
           n = rootChordNote + riff[(s + b * 2) % riff.length];
+        } else {
+          n = null;
+        }
+      } else if (station.id === 'sad') {
+        // Ludovico Einaudi / Yiruma poignant rolling piano arpeggios & emotional answering motif
+        const isArpStep = s % 2 === 0;
+        if (isArpStep) {
+          const einaudiPattern = [0, 4, 2, 5, 4, 2, 1, 0];
+          n = rootChordNote + einaudiPattern[(s / 2 + b * 2) % einaudiPattern.length];
+        } else if (s === 7 || s === 15) {
+          n = rootChordNote + 7; // Poignant high emotional fifth lift
         } else {
           n = null;
         }

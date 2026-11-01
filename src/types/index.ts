@@ -64,7 +64,8 @@ export type InstrumentId =
   | 'synthwave'
   | 'chiptune'
   | 'organ'
-  | 'cowbell';
+  | 'cowbell'
+  | 'piano';
 
 export interface InstrumentInfo {
   id: InstrumentId;

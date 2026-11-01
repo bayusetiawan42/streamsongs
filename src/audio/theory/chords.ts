@@ -65,6 +65,12 @@ export const GENRE_PROGRESSIONS: Record<string, number[][]> = {
     [0, 6, 5, 6], // i - VII - VI - VII (driving Memphis drift)
     [0, 3, 5, 0], // i - iv - VI - i
     [0, 5, 6, 5]  // i - VI - VII - VI
+  ],
+  sad: [
+    [0, 5, 2, 6], // i - VI - III - VII (Einaudi Experience & Nuvole Bianche)
+    [5, 0, 2, 4], // VI - i - iii - v (tearful melancholic lift)
+    [0, 3, 5, 4], // i - iv - VI - v (classic poignant lament)
+    [3, 0, 4, 0]  // iv - i - V - i (heartbreaking classical resolution)
   ]
 };
 

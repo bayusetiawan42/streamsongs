@@ -96,6 +96,12 @@ const STATION_PALETTES: Record<string, { hueShift: number; satMul: number; litMu
     litMul: 0.95,
     accOverride: [340, 95, 62],
   },
+  sad: {
+    hueShift: -20,      // Slate blue / weeping silver-blue twilight
+    satMul: 0.72,
+    litMul: 0.88,
+    accOverride: [215, 65, 70],
+  },
   auto: {
     hueShift: 0,
     satMul: 1.0,

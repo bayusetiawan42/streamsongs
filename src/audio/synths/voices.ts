@@ -60,6 +60,9 @@ export class VoiceManager {
       case 'cowbell':
         this.playPhonkCowbell(freq, time, duration, velocity, cutoff, wetSend, dryBus);
         break;
+      case 'piano':
+        this.playConcertPiano(freq, time, duration, velocity, cutoff, wetSend, dryBus);
+        break;
       default:
         this.playRhodes(freq, time, duration, velocity, cutoff, wetSend, dryBus);
     }
@@ -484,6 +487,56 @@ export class VoiceManager {
     osc2.stop(t + 0.3);
   }
 
+  // 10. Concert Grand Piano (Ludovico Einaudi / Yiruma / Chopin style)
+  private playConcertPiano(
+    f: number, t: number, dur: number, vel: number, cut: number,
+    wet: GainNode, dry: GainNode
+  ) {
+    const c = this.ctx;
+    // Piano soundboard body (triangle) + hammer strike overtone (sine octave)
+    const osc1 = c.createOscillator();
+    const osc2 = c.createOscillator();
+    const filter = c.createBiquadFilter();
+    const env = c.createGain();
+
+    osc1.type = 'triangle';
+    osc1.frequency.setValueAtTime(f, t);
+
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(f * 2, t);
+
+    // Dynamic hammer filter envelope (sharp bright attack decaying into warm woody body)
+    filter.type = 'lowpass';
+    const initialCut = Math.min(cut * 2.2, 5200);
+    const sustainCut = Math.min(cut * 0.9, 1800);
+    filter.frequency.setValueAtTime(initialCut, t);
+    filter.frequency.exponentialRampToValueAtTime(sustainCut, t + 0.12);
+
+    const gainVal = 0.09 * vel;
+    env.gain.setValueAtTime(0.0001, t);
+    // Hammer impact
+    env.gain.linearRampToValueAtTime(gainVal, t + 0.004);
+    // Natural acoustic piano decay curve
+    env.gain.exponentialRampToValueAtTime(gainVal * 0.45, t + 0.22);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + dur + 1.2);
+
+    osc1.connect(filter);
+    osc2.connect(filter);
+    filter.connect(env);
+    env.connect(dry);
+
+    // Rich acoustic concert hall reverb
+    const wetTap = c.createGain();
+    wetTap.gain.value = 0.55;
+    env.connect(wetTap);
+    wetTap.connect(wet);
+
+    osc1.start(t);
+    osc2.start(t);
+    osc1.stop(t + dur + 1.25);
+    osc2.stop(t + dur + 1.25);
+  }
+
   /**
    * Instrument-Adaptive Pad & Harmonic Drone Voice
    * Adjusts oscillator waveforms, filter behavior, attack/decay envelopes,
@@ -885,6 +938,46 @@ export class VoiceManager {
         break;
       }
 
+      // 10. Melancholic Piano: Emotional Bowing Cello & Chamber Strings
+      case 'piano': {
+        const s1 = c.createOscillator();
+        const s2 = c.createOscillator();
+        const filter = c.createBiquadFilter();
+        const env = c.createGain();
+
+        s1.type = 'sawtooth';
+        s1.frequency.setValueAtTime(freq * 0.996, t); // -7 cents detune
+
+        s2.type = 'sawtooth';
+        s2.frequency.setValueAtTime(freq * 1.004, t); // +7 cents detune
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(Math.min(cutoff * 0.85, 1700), t);
+
+        env.gain.setValueAtTime(0.0001, t);
+        env.gain.linearRampToValueAtTime(baseGain * 0.95, t + 0.7); // gentle string swell
+        env.gain.setValueAtTime(baseGain * 0.95, hold);
+        env.gain.exponentialRampToValueAtTime(0.0001, hold + 1.8);
+
+        s1.connect(filter);
+        s2.connect(filter);
+        filter.connect(env);
+        env.connect(dryBus);
+
+        if (wetAmt > 0) {
+          const s = c.createGain();
+          s.gain.value = wetAmt * 0.85;
+          env.connect(s);
+          s.connect(wetSend);
+        }
+
+        s1.start(t);
+        s2.start(t);
+        s1.stop(hold + 2.0);
+        s2.stop(hold + 2.0);
+        break;
+      }
+
       // Fallback
       default: {
         const osc = c.createOscillator();
@@ -1084,6 +1177,22 @@ export class VoiceManager {
         env.gain.linearRampToValueAtTime(gain, t + 0.006);
         env.gain.setValueAtTime(gain * 0.85, t + Math.max(0.08, dur * 0.7));
         env.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.15);
+        break;
+      }
+
+      // 10. Concert Piano: Deep Grand Piano Low Bass String Resonance
+      case 'piano': {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, t);
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(320, t);
+
+        const gain = 0.28;
+        env.gain.setValueAtTime(0.0001, t);
+        env.gain.linearRampToValueAtTime(gain, t + 0.005);
+        env.gain.exponentialRampToValueAtTime(gain * 0.5, t + 0.35);
+        env.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.8);
         break;
       }
 

@@ -9,7 +9,8 @@ export type ScaleName =
   | 'phrygian'
   | 'pentatonic_major'
   | 'pentatonic_minor'
-  | 'hirajoshi';
+  | 'hirajoshi'
+  | 'harmonic_minor';
 
 export const SCALES: Record<ScaleName, number[]> = {
   major: [0, 2, 4, 5, 7, 9, 11],
@@ -20,7 +21,8 @@ export const SCALES: Record<ScaleName, number[]> = {
   phrygian: [0, 1, 3, 5, 7, 8, 10],
   pentatonic_major: [0, 2, 4, 7, 9],
   pentatonic_minor: [0, 3, 5, 7, 10],
-  hirajoshi: [0, 2, 3, 7, 8] // Serene traditional Japanese scale
+  hirajoshi: [0, 2, 3, 7, 8], // Serene traditional Japanese scale
+  harmonic_minor: [0, 2, 3, 5, 7, 8, 11] // Classical poignant / emotional minor
 };
 
 export const m2f = (m: number): number => 440 * Math.pow(2, (m - 69) / 12);
