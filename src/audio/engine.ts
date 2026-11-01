@@ -2,7 +2,7 @@ import { Track, Deck, Station, WeatherCategory, InstrumentId, PeriodName } from 
 import { VoiceManager } from './synths/voices';
 import { AmbientEngine } from './ambient';
 import { SamplerManager } from './sampler/samplerManager';
-import { generateTrack, STATIONS } from './theory/generator';
+import { generateTrack, createRng, STATIONS } from './theory/generator';
 import { m2f, NOTE_NAMES, SCALES, ScaleName } from './theory/scales';
 import { planModulation, planModulationChain, getFifthsDistance, ModulationPath } from './theory/modulation';
 import { voiceLead } from './theory/chords';
@@ -11,7 +11,9 @@ import { getDrumFillStep } from './theory/drumFills';
 import {
   computeTransitionEnergy,
   planTransitionStrategy,
+  ArrangementPhase,
   TransitionContext,
+  TransitionHistoryEntry,
   TransitionMode,
   TransitionPlan,
   TransitionStyle
@@ -81,6 +83,8 @@ export class AudioEngine {
 
   public pendingKeyChange: { pc: number; scn: string } | null = null;
   private trackCount = 0;
+  /** Variety memory — recent transition modes, used by the strategy director */
+  private transitionHistory: TransitionHistoryEntry[] = [];
 
   // Listeners
   public onTrackChange?: (track: Track) => void;
@@ -718,6 +722,13 @@ export class AudioEngine {
     if (barsRemaining < 1) return null;
 
     const st = STATIONS.find(s => s.id === D.tr.stId) ?? this.station;
+    const frac = barStart / D.tr.bars;
+    const phase: ArrangementPhase =
+      frac < 0.25 ? 'intro'
+      : frac >= 0.8 ? 'outro'
+      : D.tr.drOn[barStart] && frac >= 0.45 ? 'peak'
+      : 'body';
+
     const ctx: TransitionContext = {
       stationId: D.tr.stId,
       energy: computeTransitionEnergy(st, D.tr.bpm, this.weatherCat, this.period),
@@ -728,10 +739,18 @@ export class AudioEngine {
       keysOnBeat: (D.step % 16) <= 8,
       fatigue: opts.fatigue ?? currentBar > D.tr.bars - 4,
       weather: this.weatherCat,
-      period: this.period
+      period: this.period,
+      phase,
+      swing: D.tr.swing > 0.1,
+      pulse: D.tr.pulse,
+      modeSwitch: targetKey.pc === D.tr.pc && targetKey.scn !== D.tr.scn
     };
 
-    const plan = planTransitionStrategy(ctx);
+    // Seeded RNG: reproducible per track + spot + destination, yet varied
+    const rng = createRng(
+      `${D.tr.name}|${D.tr.stId}|${barStart}|${opts.reason}|${targetKey.pc}${targetKey.scn}|${Math.round(targetBpm)}`
+    );
+    const plan = planTransitionStrategy(ctx, { rng, history: this.transitionHistory });
     const barsTotal = Math.max(1, Math.min(plan.bars, barsRemaining));
 
     const currentVoicing = D.tr.voicings[currentBar % 4] || [D.tr.root, D.tr.root + 7];
@@ -771,6 +790,8 @@ export class AudioEngine {
       targetKey,
       reason: opts.reason
     };
+    this.transitionHistory.push({ stationId: D.tr.stId, mode: plan.mode });
+    if (this.transitionHistory.length > 8) this.transitionHistory.shift();
     return plan;
   }
 
