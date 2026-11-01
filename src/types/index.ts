@@ -14,6 +14,15 @@ export interface WeatherData {
   loaded: boolean;
 }
 
+export type SettlementType = 'metropolis' | 'city' | 'town' | 'village' | 'highlands';
+
+export interface SettlementInfo {
+  type: SettlementType;
+  label: string;
+  icon: string;
+  description: string;
+}
+
 export interface LocationCoords {
   lat: number;
   lon: number;
@@ -21,6 +30,9 @@ export interface LocationCoords {
   country?: string;
   isUser?: boolean;
   timezone?: string;
+  settlement?: SettlementType;
+  population?: number;
+  elevation?: number;
 }
 
 export interface RecentLocation {
@@ -29,6 +41,9 @@ export interface RecentLocation {
   longitude: number;
   country?: string;
   timezone?: string;
+  settlement?: SettlementType;
+  population?: number;
+  elevation?: number;
 }
 
 export interface WindLevel {

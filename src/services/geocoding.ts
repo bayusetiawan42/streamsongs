@@ -6,6 +6,9 @@ export interface GeocodingResult {
   country?: string;
   admin1?: string;
   timezone?: string;
+  population?: number;
+  elevation?: number;
+  feature_code?: string;
 }
 
 export async function searchCities(query: string): Promise<GeocodingResult[]> {

@@ -6,10 +6,12 @@ import {
   WindLevel,
   InstrumentId,
   Station,
+  SettlementType,
 } from '../types';
 import { searchCities, GeocodingResult } from '../services/geocoding';
 import { MANUAL_WX, WIND_LEVELS, getWindIcon } from '../services/weather';
 import { formatTime, formatDate, getPeriodOf } from '../services/timezone';
+import { SETTLEMENT_DICTIONARY } from '../services/settlement';
 
 interface HeaderProps {
   zonedDate: Date;
@@ -17,15 +19,19 @@ interface HeaderProps {
   placeName: string;
   isGps: boolean;
   weather: WeatherData;
+  settlement: SettlementType;
   prefWeather: 'default' | WeatherCategory;
   prefWind: 'default' | number;
   prefInstrument: 'default' | InstrumentId;
   recentLocations: RecentLocation[];
+  zenMode?: boolean;
+  onToggleZenMode?: () => void;
   onSelectGps: () => void;
   onSelectCity: (city: GeocodingResult | RecentLocation) => void;
   onSelectWeather: (cat: 'default' | WeatherCategory) => void;
   onSelectWind: (speed: 'default' | number) => void;
   onSelectInstrument: (inst: 'default' | InstrumentId) => void;
+  onSelectSettlement?: (settlement: SettlementType) => void;
 }
 
 type DrawerTab = 'location' | 'weather' | 'wind' | 'instrument' | null;
@@ -46,15 +52,19 @@ export const Header: React.FC<HeaderProps> = ({
   placeName,
   isGps,
   weather,
+  settlement,
   prefWeather,
   prefWind,
   prefInstrument,
   recentLocations,
+  zenMode = false,
+  onToggleZenMode,
   onSelectGps,
   onSelectCity,
   onSelectWeather,
   onSelectWind,
   onSelectInstrument,
+  onSelectSettlement,
 }) => {
   const [activeTab, setActiveTab] = useState<DrawerTab>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -66,6 +76,19 @@ export const Header: React.FC<HeaderProps> = ({
   const [animWx, setAnimWx] = useState(false);
   const [animWind, setAnimWind] = useState(false);
   const [animInst, setAnimInst] = useState(false);
+
+  const drawerRef = useRef<HTMLDivElement | null>(null);
+
+  // Close drawer on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (activeTab && drawerRef.current && !drawerRef.current.contains(e.target as Node)) {
+        setActiveTab(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [activeTab]);
 
   // Debounced geocoding search
   const searchTimeoutRef = useRef<number | null>(null);
@@ -135,18 +158,20 @@ export const Header: React.FC<HeaderProps> = ({
       ? `${weather.temp}°C · ${weather.label}`
       : MANUAL_WX[prefWeather]?.label || weather.label;
 
+  const currentSettlement = SETTLEMENT_DICTIONARY[settlement] || SETTLEMENT_DICTIONARY.metropolis;
+
   return (
-    <header>
-      <div className="top-card" id="top-card">
+    <header className="app-header">
+      <div className="top-island" id="top-card" ref={drawerRef}>
         <div className="top-chips">
-          {/* Location Chip */}
+          {/* Location & Settlement Chip */}
           <button
             type="button"
-            className={`chip ${activeTab === 'location' ? 'active' : ''} ${animLoc ? 'chip-pulsing' : ''}`}
+            className={`chip chip-loc ${activeTab === 'location' ? 'active' : ''} ${animLoc ? 'chip-pulsing' : ''}`}
             id="chip-loc"
             onClick={() => toggleTab('location')}
             aria-expanded={activeTab === 'location'}
-            title="Change location"
+            title="Location & settlement vibe"
           >
             <i
               id="loc-icon"
@@ -155,6 +180,10 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             />
             <span id="place">{placeName}</span>
+            <span className="settlement-badge" title={currentSettlement.description}>
+              <i className={`fa-solid ${currentSettlement.icon}`} />
+              <span className="settlement-badge-txt">{currentSettlement.label}</span>
+            </span>
             <i className="fa-solid fa-chevron-down chev" />
           </button>
 
@@ -208,6 +237,20 @@ export const Header: React.FC<HeaderProps> = ({
             <span id="inst-txt">{instLabel}</span>
             <i className="fa-solid fa-chevron-down chev" />
           </button>
+
+          {/* Zen Mode Button */}
+          {onToggleZenMode && (
+            <button
+              type="button"
+              className={`chip zen-chip ${zenMode ? 'active' : ''}`}
+              onClick={onToggleZenMode}
+              title="Toggle Zen Mode (Z)"
+              aria-label="Zen Mode"
+            >
+              <i className={`fa-solid ${zenMode ? 'fa-compress' : 'fa-expand'}`} />
+              <span className="zen-txt">Zen</span>
+            </button>
+          )}
         </div>
 
         {/* In-Flow Collapsible Accordion Drawer */}
@@ -223,7 +266,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <span id="drawer-title">
                   {activeTab === 'location' && (
                     <>
-                      <i className="fa-solid fa-location-dot" /> Choose Location
+                      <i className="fa-solid fa-location-dot" /> Location & Atmosphere
                     </>
                   )}
                   {activeTab === 'weather' && (
@@ -258,6 +301,36 @@ export const Header: React.FC<HeaderProps> = ({
                 {/* 1. Location Drawer */}
                 {activeTab === 'location' && (
                   <div>
+                    {/* Settlement Atmosphere Override / Experience Pills */}
+                    {onSelectSettlement && (
+                      <div className="settlement-picker-row">
+                        <div className="pop-sec-title">Atmosphere Vibe</div>
+                        <div className="settlement-options-strip">
+                          {(Object.keys(SETTLEMENT_DICTIONARY) as SettlementType[]).map((stKey) => {
+                            const info = SETTLEMENT_DICTIONARY[stKey];
+                            const isCur = settlement === stKey;
+                            return (
+                              <button
+                                key={stKey}
+                                type="button"
+                                className={`settlement-pill-btn ${isCur ? 'active' : ''}`}
+                                onClick={() => {
+                                  onSelectSettlement(stKey);
+                                  triggerAnimation('loc');
+                                }}
+                                title={info.description}
+                              >
+                                <i className={`fa-solid ${info.icon}`} />
+                                <span>{info.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="pop-sec-title" style={{ marginTop: '8px' }}>Select Target City</div>
+
                     <button
                       type="button"
                       className={`pop-opt gps-btn ${isGps ? 'active' : ''}`}
@@ -279,7 +352,7 @@ export const Header: React.FC<HeaderProps> = ({
                       <i className="fa-solid fa-magnifying-glass" />
                       <input
                         type="text"
-                        placeholder="Search city (e.g. Tokyo, London, Paris)…"
+                        placeholder="Search city (e.g. Tokyo, Ubud, Hallstatt, Zermatt)…"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         autoFocus
@@ -481,10 +554,12 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Clock, Date, and Mood reacting directly to target location's timezone */}
-      <div id="clock">{formatTime(zonedDate)}</div>
-      <div id="date">{formatDate(zonedDate)}</div>
-      <div id="mood">{moodText}</div>
+      {/* Modern Minimalist Clock, Date, and Mood */}
+      <div className="hero-clock-block">
+        <div id="clock">{formatTime(zonedDate)}</div>
+        <div id="date">{formatDate(zonedDate)}</div>
+        <div id="mood">{moodText}</div>
+      </div>
     </header>
   );
 };

@@ -1,13 +1,16 @@
 import React, { useEffect, useRef } from 'react';
 import { AudioEngine } from '../audio/engine';
-import { WeatherData } from '../types';
+import { WeatherData, SettlementType } from '../types';
+import { ThemePalette } from '../services/themeEngine';
 
 interface VisualCanvasProps {
   engine: AudioEngine;
   weather: WeatherData;
   weatherMuted: boolean;
   zonedDate: Date;
-  theme: { top: string; bot: string; acc: string; acc2: string; ah: number; h: number };
+  theme: ThemePalette;
+  settlement: SettlementType;
+  bpm?: number;
   onBassLevelChange?: (level: number) => void;
 }
 
@@ -16,6 +19,7 @@ interface Star {
   y: number;
   r: number;
   p: number;
+  speed: number;
 }
 
 interface Drop {
@@ -41,27 +45,49 @@ interface Cloud {
   a: number;
 }
 
+interface Firefly {
+  x: number;
+  y: number;
+  r: number;
+  p: number;
+  vx: number;
+  vy: number;
+}
+
+interface SkylineBuilding {
+  xRatio: number;
+  wRatio: number;
+  hRatio: number;
+  hasWindow: boolean;
+  windowCols: number;
+  windowRows: number;
+}
+
 export const VisualCanvas: React.FC<VisualCanvasProps> = ({
   engine,
   weather,
   weatherMuted,
   zonedDate,
   theme,
+  settlement,
   onBassLevelChange,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  // Procedural Stars
   const starsRef = useRef<Star[]>(
-    Array.from({ length: 90 }, () => ({
+    Array.from({ length: 120 }, () => ({
       x: Math.random(),
-      y: Math.random() * 0.7,
-      r: Math.random() * 1.4 + 0.4,
-      p: Math.random() * 6,
+      y: Math.random() * 0.72,
+      r: Math.random() * 1.5 + 0.4,
+      p: Math.random() * 6.28,
+      speed: 0.8 + Math.random() * 1.5,
     }))
   );
 
+  // Weather drops, flakes, clouds
   const dropsRef = useRef<Drop[]>(
-    Array.from({ length: 170 }, () => ({
+    Array.from({ length: 160 }, () => ({
       x: Math.random(),
       y: Math.random(),
       l: Math.random() * 0.03 + 0.02,
@@ -70,30 +96,64 @@ export const VisualCanvas: React.FC<VisualCanvasProps> = ({
   );
 
   const flakesRef = useRef<Flake[]>(
-    Array.from({ length: 130 }, () => ({
+    Array.from({ length: 110 }, () => ({
       x: Math.random(),
       y: Math.random(),
-      r: Math.random() * 2.4 + 1,
+      r: Math.random() * 2.2 + 1,
       v: Math.random() * 0.0018 + 0.0012,
       p: Math.random() * 6,
     }))
   );
 
   const cloudsRef = useRef<Cloud[]>(
-    Array.from({ length: 8 }, () => ({
+    Array.from({ length: 7 }, () => ({
       x: Math.random(),
-      y: 0.05 + Math.random() * 0.45,
-      r: 0.12 + Math.random() * 0.14,
+      y: 0.04 + Math.random() * 0.42,
+      r: 0.14 + Math.random() * 0.16,
       v: Math.random() * 0.00008 + 0.00003,
-      a: 0.5 + Math.random() * 0.5,
+      a: 0.45 + Math.random() * 0.45,
     }))
+  );
+
+  // Fireflies for Village atmosphere
+  const firefliesRef = useRef<Firefly[]>(
+    Array.from({ length: 28 }, () => ({
+      x: Math.random(),
+      y: 0.55 + Math.random() * 0.4,
+      r: Math.random() * 1.8 + 1.2,
+      p: Math.random() * 6.28,
+      vx: (Math.random() - 0.5) * 0.0004,
+      vy: -0.0003 - Math.random() * 0.0003,
+    }))
+  );
+
+  // Stable procedural Skyline for Metropolis & City
+  const skylineRef = useRef<SkylineBuilding[]>(
+    (() => {
+      const buildings: SkylineBuilding[] = [];
+      let curX = -0.02;
+      while (curX < 1.05) {
+        const w = 0.025 + Math.random() * 0.045;
+        const h = 0.08 + Math.random() * 0.15;
+        buildings.push({
+          xRatio: curX,
+          wRatio: w,
+          hRatio: h,
+          hasWindow: Math.random() > 0.25,
+          windowCols: Math.floor(Math.random() * 3) + 2,
+          windowRows: Math.floor(Math.random() * 6) + 4,
+        });
+        curX += w * (0.85 + Math.random() * 0.25);
+      }
+      return buildings;
+    })()
   );
 
   const weatherStateRef = useRef({ cloud: 0, rain: 0, snow: 0, fog: 0 });
   const bassLevelRef = useRef(0);
   const flashRef = useRef(0);
 
-  // Periodic thunder trigger when weather is storm and not muted
+  // Periodic thunder when weather is storm
   useEffect(() => {
     let timer: number;
     const scheduleThunder = () => {
@@ -135,7 +195,7 @@ export const VisualCanvas: React.FC<VisualCanvasProps> = ({
       ctx.clearRect(0, 0, cw, ch);
       const sec = ts / 1000;
 
-      // Weather state target lerp
+      // Target weather values
       const tg = weatherMuted
         ? { cloud: 0, rain: 0, snow: 0, fog: 0 }
         : {
@@ -162,67 +222,228 @@ export const VisualCanvas: React.FC<VisualCanvasProps> = ({
         }
         tl /= 6 * 255;
       }
-      bassLevelRef.current += (tl - bassLevelRef.current) * 0.25;
+      bassLevelRef.current += (tl - bassLevelRef.current) * 0.22;
       const lvl = bassLevelRef.current;
       if (onBassLevelChange) {
         onBassLevelChange(lvl);
       }
 
-      // Hour of target location (from zonedDate)
+      // Local solar hour
       const hr =
         zonedDate.getHours() +
         zonedDate.getMinutes() / 60 +
         zonedDate.getSeconds() / 3600;
       const day = hr >= 6 && hr < 18;
 
-      // Stars (at night)
-      if (!day) {
-        const sa = (1 - Math.min(1, ws.cloud) * 0.85) * (1 - Math.min(1, ws.rain) * 0.8);
-        ctx.fillStyle = '#fff';
+      // 1. Organic Fluid Aurora Ribbon (Upper Sky Living Glow)
+      const auroraAlpha = (day ? 0.08 : 0.24) * (1 - Math.min(1, ws.cloud * 0.8));
+      if (auroraAlpha > 0.01) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen';
+        const waveCount = 2;
+        for (let w = 0; w < waveCount; w++) {
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          const yBase = ch * (0.15 + w * 0.12);
+          for (let x = 0; x <= cw; x += 30) {
+            const wave1 = Math.sin(x * 0.003 + sec * 0.4 + w * 2.1) * 35;
+            const wave2 = Math.cos(x * 0.0015 - sec * 0.3) * 20;
+            const bassWave = lvl * 18 * Math.sin(x * 0.005 + sec);
+            const y = yBase + wave1 + wave2 + bassWave;
+            ctx.lineTo(x, y);
+          }
+          ctx.lineTo(cw, 0);
+          ctx.closePath();
+
+          const grad = ctx.createLinearGradient(0, 0, 0, yBase + 80);
+          grad.addColorStop(0, theme.acc);
+          grad.addColorStop(1, 'transparent');
+          ctx.fillStyle = grad;
+          ctx.globalAlpha = auroraAlpha * (0.8 + lvl * 0.3);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      // 2. Stars (Night & Twilight)
+      if (!day && theme.starVisibility > 0.05) {
+        const sa =
+          theme.starVisibility *
+          (1 - Math.min(1, ws.cloud) * 0.85) *
+          (1 - Math.min(1, ws.rain) * 0.8);
+
+        ctx.fillStyle = '#ffffff';
         for (const s of starsRef.current) {
-          ctx.globalAlpha =
-            Math.max(0, sa) * (0.35 + 0.65 * Math.abs(Math.sin(sec * 1.2 + s.p)));
+          const twinkle = 0.3 + 0.7 * Math.abs(Math.sin(sec * s.speed + s.p));
+          ctx.globalAlpha = Math.max(0, sa * twinkle);
           ctx.beginPath();
           ctx.arc(s.x * cw, s.y * ch, s.r, 0, 7);
           ctx.fill();
         }
       }
 
-      // Celestial body (Sun / Moon)
+      // 3. Celestial Body (Sun / Moon)
       const p = day ? (hr - 6) / 12 : ((hr - 18 + 24) % 24) / 12;
-      const x = cw * (0.1 + 0.8 * p);
-      const y = ch * 0.5 - Math.sin(Math.PI * p) * ch * 0.35;
-      const r = 34 + lvl * 28 + Math.sin(sec) * 2;
-      const col = day ? theme.acc : 'hsl(220 60% 90%)';
-      const dim = 1 - Math.min(1, ws.cloud) * 0.6;
+      const cx = cw * (0.1 + 0.8 * p);
+      const cy = ch * 0.48 - Math.sin(Math.PI * p) * ch * 0.32;
+      const baseR = 32;
+      // Gentle bass breath on corona
+      const r = baseR + lvl * 18 + Math.sin(sec * 1.5) * 1.5;
+      const col = day ? theme.acc : 'hsl(215 70% 92%)';
+      const dim = 1 - Math.min(1, ws.cloud) * 0.55;
 
-      const gr = ctx.createRadialGradient(x, y, 0, x, y, r * 4.5);
+      // Celestial Corona Halo
+      const haloR = r * (day ? 4.2 : 3.4);
+      const gr = ctx.createRadialGradient(cx, cy, 0, cx, cy, haloR);
       gr.addColorStop(0, col);
-      gr.addColorStop(0.22, col);
+      gr.addColorStop(0.25, col);
       gr.addColorStop(1, 'transparent');
 
-      ctx.globalAlpha = 0.5 * dim;
+      ctx.globalAlpha = 0.45 * dim;
       ctx.fillStyle = gr;
       ctx.beginPath();
-      ctx.arc(x, y, r * 4.5, 0, 7);
+      ctx.arc(cx, cy, haloR, 0, 7);
       ctx.fill();
 
+      // Main Orb
       ctx.globalAlpha = dim;
       ctx.fillStyle = col;
       ctx.beginPath();
-      ctx.arc(x, y, r, 0, 7);
+      ctx.arc(cx, cy, r, 0, 7);
       ctx.fill();
 
-      // Crescent moon cutout
+      // Crescent Moon Cutout
       if (!day) {
         ctx.globalAlpha = dim;
         ctx.fillStyle = theme.top;
         ctx.beginPath();
-        ctx.arc(x + r * 0.42, y - r * 0.2, r * 0.86, 0, 7);
+        ctx.arc(cx + r * 0.4, cy - r * 0.22, r * 0.85, 0, 7);
         ctx.fill();
       }
 
-      // Clouds
+      // 4. Urban Skyglow (Metropolis & City Light Pollution Glow)
+      if (!day && theme.skyglowAlpha > 0.01) {
+        const glowH = ch * 0.38;
+        const skyglow = ctx.createLinearGradient(0, ch - glowH, 0, ch);
+        skyglow.addColorStop(0, 'transparent');
+        skyglow.addColorStop(1, theme.skyglowColor);
+        ctx.globalAlpha = theme.skyglowAlpha;
+        ctx.fillStyle = skyglow;
+        ctx.fillRect(0, ch - glowH, cw, glowH);
+      }
+
+      // 5. Horizon Silhouettes according to Settlement Typology
+      if (settlement === 'metropolis' || settlement === 'city') {
+        // Modern Minimalist Skyline
+        const skylineH = ch * (settlement === 'metropolis' ? 0.18 : 0.12);
+        ctx.fillStyle = 'rgba(6, 6, 14, 0.48)';
+        for (const b of skylineRef.current) {
+          const bx = b.xRatio * cw;
+          const bw = b.wRatio * cw;
+          const bh = b.hRatio * skylineH * 1.6;
+          const by = ch - bh;
+
+          ctx.fillRect(bx, by, bw, bh);
+
+          // Subtle glowing windows at night
+          if (!day && b.hasWindow) {
+            const winW = 1.5;
+            const winH = 2.2;
+            const colStep = bw / (b.windowCols + 1);
+            const rowStep = bh / (b.windowRows + 1);
+
+            for (let c = 1; c <= b.windowCols; c++) {
+              for (let rw = 1; rw <= b.windowRows; rw++) {
+                // Stochastic twinkling window light
+                if ((c * 7 + rw * 13) % 5 === 0) {
+                  ctx.fillStyle = 'rgba(255, 230, 160, 0.35)';
+                  ctx.fillRect(bx + c * colStep, by + rw * rowStep, winW, winH);
+                }
+              }
+            }
+            ctx.fillStyle = 'rgba(6, 6, 14, 0.48)';
+          }
+        }
+      } else if (settlement === 'highlands') {
+        // Layered Mountain Ridges with Parallax Haze
+        const ridgeCount = 2;
+        for (let rIdx = 0; rIdx < ridgeCount; rIdx++) {
+          const depthAlpha = rIdx === 0 ? 0.25 : 0.45;
+          const baseY = ch * (0.86 + rIdx * 0.06);
+          ctx.beginPath();
+          ctx.moveTo(0, ch);
+          ctx.lineTo(0, baseY);
+
+          const step = cw / 8;
+          for (let seg = 1; seg <= 8; seg++) {
+            const mx = seg * step;
+            const peak = seg % 2 === 1 ? -ch * 0.07 : ch * 0.02;
+            ctx.lineTo(mx, baseY + peak);
+          }
+          ctx.lineTo(cw, ch);
+          ctx.closePath();
+
+          ctx.fillStyle = rIdx === 0 ? theme.acc : 'rgba(5, 7, 18, 0.6)';
+          ctx.globalAlpha = depthAlpha;
+          ctx.fill();
+        }
+      } else {
+        // Town & Village: Gentle Organic Rolling Hills
+        ctx.beginPath();
+        ctx.moveTo(0, ch);
+        const hillY = ch * 0.9;
+        ctx.lineTo(0, hillY);
+        ctx.quadraticCurveTo(cw * 0.35, hillY - 24, cw * 0.65, hillY + 10);
+        ctx.quadraticCurveTo(cw * 0.85, hillY + 28, cw, hillY - 12);
+        ctx.lineTo(cw, ch);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(6, 9, 18, 0.42)';
+        ctx.globalAlpha = 0.5;
+        ctx.fill();
+      }
+
+      // 6. Fireflies for Peaceful Village
+      if (!day && theme.fireflyDensity > 0.05) {
+        for (const ff of firefliesRef.current) {
+          ff.x += ff.vx;
+          ff.y += ff.vy;
+          if (ff.y < 0.45) {
+            ff.y = 0.92;
+            ff.x = Math.random();
+          }
+          if (ff.x < 0) ff.x = 1;
+          if (ff.x > 1) ff.x = 0;
+
+          // Bioluminescent pulsing glow
+          const glow = Math.sin(sec * 2.2 + ff.p);
+          if (glow > 0.1) {
+            const fx = ff.x * cw;
+            const fy = ff.y * ch;
+            const fa = glow * 0.75;
+
+            // Soft radial aura
+            const fg = ctx.createRadialGradient(fx, fy, 0, fx, fy, ff.r * 3.5);
+            fg.addColorStop(0, `rgba(210, 255, 110, ${fa})`);
+            fg.addColorStop(0.5, `rgba(180, 240, 80, ${fa * 0.4})`);
+            fg.addColorStop(1, 'transparent');
+
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = fg;
+            ctx.beginPath();
+            ctx.arc(fx, fy, ff.r * 3.5, 0, 7);
+            ctx.fill();
+
+            // Core
+            ctx.fillStyle = '#ffffff';
+            ctx.globalAlpha = fa;
+            ctx.beginPath();
+            ctx.arc(fx, fy, ff.r * 0.8, 0, 7);
+            ctx.fill();
+          }
+        }
+      }
+
+      // 7. Clouds
       if (!weatherMuted && ws.cloud > 0.02) {
         const dk = Math.min(1, ws.rain * 0.7 + (day ? 0 : 0.5));
         const cc = [255 - 130 * dk, 255 - 130 * dk, 255 - 100 * dk]
@@ -231,22 +452,22 @@ export const VisualCanvas: React.FC<VisualCanvasProps> = ({
 
         for (const c of cloudsRef.current) {
           c.x = (c.x + c.v * (1 + weather.wind / 12)) % 1.4;
-          const cx = (c.x - 0.2) * cw;
-          const cy = c.y * ch * 0.9;
+          const cpx = (c.x - 0.2) * cw;
+          const cpy = c.y * ch * 0.9;
           const cr = c.r * cw;
           const a = c.a * Math.min(1, ws.cloud * 1.3) * 0.34;
           if (a >= 0.01) {
-            const cg = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr);
+            const cg = ctx.createRadialGradient(cpx, cpy, 0, cpx, cpy, cr);
             cg.addColorStop(0, `rgba(${cc},${a})`);
             cg.addColorStop(1, `rgba(${cc},0)`);
             ctx.globalAlpha = 1;
             ctx.fillStyle = cg;
-            ctx.fillRect(cx - cr, cy - cr, cr * 2, cr * 2);
+            ctx.fillRect(cpx - cr, cpy - cr, cr * 2, cr * 2);
           }
         }
       }
 
-      // Fog
+      // 8. Fog
       if (!weatherMuted && ws.fog > 0.02) {
         for (let i = 0; i < 3; i++) {
           const fy = ch * (0.45 + i * 0.2) + Math.sin(sec * 0.2 + i) * 18;
@@ -260,7 +481,7 @@ export const VisualCanvas: React.FC<VisualCanvasProps> = ({
         }
       }
 
-      // Rain
+      // 9. Rain
       if (!weatherMuted && ws.rain > 0.02) {
         ctx.strokeStyle = 'rgba(200,220,255,.5)';
         ctx.lineWidth = 1.2;
@@ -283,7 +504,7 @@ export const VisualCanvas: React.FC<VisualCanvasProps> = ({
         ctx.stroke();
       }
 
-      // Snow
+      // 10. Snow
       if (!weatherMuted && ws.snow > 0.02) {
         ctx.fillStyle = '#fff';
         ctx.globalAlpha = 0.8 * Math.min(1, ws.snow);
@@ -300,7 +521,7 @@ export const VisualCanvas: React.FC<VisualCanvasProps> = ({
         }
       }
 
-      // Lightning flash
+      // 11. Lightning flash
       if (!weatherMuted && flashRef.current > 0.02) {
         ctx.globalAlpha = flashRef.current * 0.55;
         ctx.fillStyle = '#e8f0ff';
@@ -308,19 +529,19 @@ export const VisualCanvas: React.FC<VisualCanvasProps> = ({
         flashRef.current *= 0.9;
       }
 
-      // Frequency visualizer bars at the bottom
+      // 12. Minimalist Audio Spectrum Visualizer Bars (Subtle & Clean)
       if (bins && engine.playing) {
-        const nb = 56;
+        const nb = 48;
         const bw = cw / nb;
         ctx.fillStyle = theme.acc;
-        ctx.globalAlpha = 0.5;
+        ctx.globalAlpha = 0.38;
         for (let i = 0; i < nb; i++) {
-          const v = Math.max(3, (bins[Math.floor(i * 0.9)] / 255) * ch * 0.3);
+          const v = Math.max(2, (bins[Math.floor(i * 0.9)] / 255) * ch * 0.22);
           ctx.beginPath();
           if (typeof ctx.roundRect === 'function') {
-            ctx.roundRect(i * bw + 3, ch - v, bw - 6, v, 5);
+            ctx.roundRect(i * bw + 2, ch - v, bw - 4, v, 4);
           } else {
-            ctx.rect(i * bw + 3, ch - v, bw - 6, v);
+            ctx.rect(i * bw + 2, ch - v, bw - 4, v);
           }
           ctx.fill();
         }
@@ -336,7 +557,7 @@ export const VisualCanvas: React.FC<VisualCanvasProps> = ({
       window.removeEventListener('resize', resize);
       cancelAnimationFrame(animFrame);
     };
-  }, [engine, weather, weatherMuted, zonedDate, theme, onBassLevelChange]);
+  }, [engine, weather, weatherMuted, zonedDate, theme, settlement, onBassLevelChange]);
 
   return <canvas id="v" ref={canvasRef} />;
 };

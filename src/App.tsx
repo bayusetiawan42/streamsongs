@@ -10,6 +10,7 @@ import {
   InstrumentId,
   Station,
   Track,
+  SettlementType,
 } from './types';
 import { GeocodingResult } from './services/geocoding';
 import {
@@ -19,34 +20,30 @@ import {
   WIND_LEVELS,
 } from './services/weather';
 import { getZonedDate } from './services/timezone';
+import { classifySettlement, reverseGeocodeGPS } from './services/settlement';
+import { computeTheme, ThemePalette } from './services/themeEngine';
 import { VisualCanvas } from './components/VisualCanvas';
 import { Header } from './components/Header';
 import { NowPlaying } from './components/NowPlaying';
 import { StationsGrid } from './components/StationsGrid';
 import { Toast } from './components/Toast';
 
-// Sky color diurnal keyframe table
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-const hl = (a: number, b: number, t: number) =>
-  (a + (((b - a + 540) % 360) - 180) * t + 360) % 360;
-const mix = (a: number[], b: number[], t: number) => [
-  hl(a[0], b[0], t),
-  lerp(a[1], b[1], t),
-  lerp(a[2], b[2], t),
-];
-const hslStr = (c: number[]) =>
-  `hsl(${c[0].toFixed(1)} ${Math.max(0, c[1]).toFixed(1)}% ${Math.max(0, c[2]).toFixed(1)}%)`;
-
-const K: [number, number[], number[], number[]][] = [
-  [0, [250, 50, 7], [270, 45, 14], [290, 80, 65]],
-  [5, [245, 45, 13], [335, 55, 34], [340, 85, 68]],
-  [7, [205, 70, 45], [30, 85, 62], [35, 95, 62]],
-  [11, [205, 75, 52], [190, 70, 72], [45, 95, 60]],
-  [15, [215, 70, 50], [195, 65, 68], [40, 95, 60]],
-  [18, [235, 55, 28], [20, 85, 50], [15, 95, 62]],
-  [21, [250, 50, 12], [285, 50, 24], [300, 80, 68]],
-  [24, [250, 50, 7], [270, 45, 14], [290, 80, 65]],
-];
+const DEFAULT_THEME: ThemePalette = {
+  top: 'hsl(248 52% 6%)',
+  bot: 'hsl(268 48% 12%)',
+  acc: 'hsl(280 80% 68%)',
+  acc2: 'hsl(335 85% 68%)',
+  glow: 'hsl(280 90% 60%)',
+  skyglowColor: 'rgba(255,160,90,0.25)',
+  skyglowAlpha: 0,
+  h1: 225,
+  h2: 275,
+  ah: 280,
+  h: 0,
+  isDay: false,
+  starVisibility: 1.0,
+  fireflyDensity: 0,
+};
 
 export const App: React.FC = () => {
   // Audio Engine instance
@@ -63,6 +60,9 @@ export const App: React.FC = () => {
   const [volume, setVolume] = useState(0.85);
   const [bassLevel, setBassLevel] = useState(0);
 
+  // Zen Mode
+  const [zenMode, setZenMode] = useState(false);
+
   // Location & Timezone State
   const [, setCoords] = useState<LocationCoords>({
     lat: -6.2,
@@ -74,6 +74,10 @@ export const App: React.FC = () => {
   const [isGps, setIsGps] = useState(true);
   const [targetTimezone, setTargetTimezone] = useState<string | null>(null);
   const [zonedDate, setZonedDate] = useState<Date>(() => getZonedDate(null));
+
+  // Settlement
+  const [settlement, setSettlement] = useState<SettlementType>('metropolis');
+  const [settlementLocked, setSettlementLocked] = useState(false);
 
   // Weather State
   const [liveWeather, setLiveWeather] = useState<WeatherData>(DEFAULT_WEATHER);
@@ -124,15 +128,8 @@ export const App: React.FC = () => {
     }, 2800);
   }, []);
 
-  // Theme object
-  const [theme, setTheme] = useState({
-    top: '#0a0a16',
-    bot: '#121026',
-    acc: '#8ba2ff',
-    acc2: '#c48bff',
-    ah: 225,
-    h: 12,
-  });
+  // Theme Object (fully managed by themeEngine)
+  const [theme, setTheme] = useState<ThemePalette>(DEFAULT_THEME);
 
   // Keep zonedDate synchronized to targetTimezone every 1000ms
   useEffect(() => {
@@ -142,62 +139,35 @@ export const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [targetTimezone]);
 
-  // Update sky theme gradients according to zonedDate
+  // Recompute theme whenever any relevant state changes
   useEffect(() => {
-    const h =
-      zonedDate.getHours() +
-      zonedDate.getMinutes() / 60 +
-      zonedDate.getSeconds() / 3600;
+    const currentStation = STATIONS[stationIndex];
+    const newTheme = computeTheme({
+      zonedDate,
+      station: currentStation,
+      weather: effectiveWeather,
+      settlement,
+      weatherMuted,
+      trackHueOffset: currentTrack?.hOff || 0,
+    });
 
-    let i = 0;
-    while (i < K.length - 2 && h >= K[i + 1][0]) i++;
-    const t = (h - K[i][0]) / (K[i + 1][0] - K[i][0]);
+    setTheme(newTheme);
 
-    const tc = weatherMuted
-      ? 0
-      : effectiveWeather.cat === 'storm'
-      ? 0.6
-      : effectiveWeather.cat === 'rain'
-      ? 0.35
-      : effectiveWeather.cat === 'fog'
-      ? 0.2
-      : effectiveWeather.cat === 'snow'
-      ? 0.1
-      : (effectiveWeather.cloud / 100) * 0.4;
-
-    const cloudFactor = weatherMuted ? 0 : effectiveWeather.cloud / 100;
-    const adj = (c: number[]) => [
-      c[0],
-      c[1] * (1 - 0.5 * Math.min(1, cloudFactor)),
-      c[2] * (1 - tc),
-    ];
-
-    const top = hslStr(adj(mix(K[i][1], K[i + 1][1], t)));
-    const bot = hslStr(adj(mix(K[i][2], K[i + 1][2], t)));
-    const a = mix(K[i][3], K[i + 1][3], t);
-    const acc = hslStr(a);
-    const acc2 = hslStr([(a[0] + 55) % 360, a[1], a[2]]);
-
-    const rootStyle = document.documentElement.style;
-    rootStyle.setProperty('--top', top);
-    rootStyle.setProperty('--bot', bot);
-    rootStyle.setProperty('--acc', acc);
-    rootStyle.setProperty('--acc2', acc2);
-
-    // Conic gradient disc hues
-    const h1 = ((a[0] + (currentTrack?.hOff || 0)) % 360 + 360) % 360;
-    const h2 = (h1 + 45) % 360;
-    rootStyle.setProperty('--h1', h1.toFixed(1));
-    rootStyle.setProperty('--h2', h2.toFixed(1));
-
-    setTheme({ top, bot, acc, acc2, ah: a[0], h });
-  }, [zonedDate, effectiveWeather, weatherMuted, currentTrack]);
+    // Write CSS variables for UI components to consume
+    const rs = document.documentElement.style;
+    rs.setProperty('--top', newTheme.top);
+    rs.setProperty('--bot', newTheme.bot);
+    rs.setProperty('--acc', newTheme.acc);
+    rs.setProperty('--acc2', newTheme.acc2);
+    rs.setProperty('--glow', newTheme.glow);
+    rs.setProperty('--h1', newTheme.h1.toFixed(1));
+    rs.setProperty('--h2', newTheme.h2.toFixed(1));
+  }, [zonedDate, stationIndex, effectiveWeather, settlement, weatherMuted, currentTrack]);
 
   // Compute effective weather based on live data and user preferences
   useEffect(() => {
     const updated: WeatherData = { ...liveWeather };
 
-    // Apply Weather preference
     if (prefWeather !== 'default') {
       const manual = MANUAL_WX[prefWeather] || MANUAL_WX.clear;
       updated.cat = prefWeather;
@@ -206,7 +176,6 @@ export const App: React.FC = () => {
       updated.cloud = manual.cloud;
     }
 
-    // Apply Wind preference
     if (prefWind !== 'default') {
       updated.wind = prefWind;
     }
@@ -221,7 +190,6 @@ export const App: React.FC = () => {
       const forecast = await fetchWeatherForecast(lat, lon);
       setLiveWeather(forecast);
 
-      // Set target timezone
       const tz = customTz || forecast.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
       setTargetTimezone(tz);
       setZonedDate(getZonedDate(tz));
@@ -230,37 +198,76 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Initial location detection (GPS)
+  // Classify settlement from GeocodingResult metadata
+  const updateSettlementFromGeocode = useCallback(
+    (city: GeocodingResult | RecentLocation) => {
+      if (settlementLocked) return;
+      const pop = 'population' in city ? city.population : undefined;
+      const elev = 'elevation' in city ? city.elevation : undefined;
+      const featureCode = 'feature_code' in city ? city.feature_code : undefined;
+      const type = classifySettlement({
+        population: pop,
+        elevation: elev,
+        featureCode,
+      });
+      setSettlement(type);
+    },
+    [settlementLocked]
+  );
+
+  // Initial GPS location detection
   const initGps = useCallback(() => {
     setPlaceName('Locating…');
     setIsGps(true);
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
-        (pos) => {
+        async (pos) => {
           const lat = pos.coords.latitude;
           const lon = pos.coords.longitude;
           setCoords({ lat, lon, place: 'Your location', isUser: true });
-          setPlaceName('Your location');
+
+          // Reverse geocode for settlement info
+          if (!settlementLocked) {
+            reverseGeocodeGPS(lat, lon).then((info) => {
+              setPlaceName(info.placeName || 'Your location');
+              setSettlement(info.settlement);
+            });
+          }
+
           loadWeather(lat, lon);
         },
         () => {
-          // Fallback location (Jakarta)
           setCoords({ lat: -6.2, lon: 106.8, place: 'Jakarta', isUser: true });
-          setPlaceName('Your location');
+          setPlaceName('Jakarta');
+          if (!settlementLocked) setSettlement('metropolis'); // Jakarta default
           loadWeather(-6.2, 106.8);
         },
         { timeout: 7000 }
       );
     } else {
       setCoords({ lat: -6.2, lon: 106.8, place: 'Jakarta', isUser: true });
-      setPlaceName('Your location');
+      setPlaceName('Jakarta');
+      if (!settlementLocked) setSettlement('metropolis');
       loadWeather(-6.2, 106.8);
     }
-  }, [loadWeather]);
+  }, [loadWeather, settlementLocked]);
 
   useEffect(() => {
     initGps();
   }, [initGps]);
+
+  // Zen Mode keyboard toggle
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'z' || e.key === 'Z') {
+        if (!(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+          setZenMode((prev) => !prev);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
 
   // Engine event subscriptions
   useEffect(() => {
@@ -268,7 +275,6 @@ export const App: React.FC = () => {
       setCurrentTrack(track);
     };
 
-    // Apply initial stored preferences to engine
     if (prefBpm !== 'default') engine.setBpm(prefBpm);
     if (prefInstrument !== 'default') engine.setInstrument(prefInstrument);
     engine.setWeatherMuted(weatherMuted);
@@ -328,6 +334,9 @@ export const App: React.FC = () => {
     setCoords({ lat, lon, place: city.name, isUser: false, timezone: city.timezone });
     setPlaceName(city.name);
 
+    // Classify settlement from geocode metadata
+    updateSettlementFromGeocode(city);
+
     // Save to recents
     setRecentLocations((prev) => {
       const filtered = prev.filter((r) => r.name !== city.name);
@@ -338,6 +347,8 @@ export const App: React.FC = () => {
           longitude: lon,
           country: 'country' in city ? city.country : undefined,
           timezone: city.timezone,
+          population: 'population' in city ? (city as GeocodingResult).population : undefined,
+          elevation: 'elevation' in city ? (city as GeocodingResult).elevation : undefined,
         },
         ...filtered,
       ].slice(0, 5);
@@ -349,10 +360,16 @@ export const App: React.FC = () => {
     showToast(`Location: ${city.name} (${city.timezone || 'Auto'})`);
   };
 
-  // GPS Selection
   const handleSelectGps = () => {
     initGps();
     showToast('Switched to GPS location');
+  };
+
+  // Settlement manual override
+  const handleSelectSettlement = (type: SettlementType) => {
+    setSettlement(type);
+    setSettlementLocked(true);
+    showToast(`Atmosphere: ${type.charAt(0).toUpperCase() + type.slice(1)} vibe locked`);
   };
 
   // Weather Preference
@@ -460,43 +477,50 @@ export const App: React.FC = () => {
 
   return (
     <>
-      {/* Background Animated Blobs */}
+      {/* Grain Texture Overlay */}
+      <div className="grain-overlay" aria-hidden="true" />
+
+      {/* Dynamic Background Blobs */}
       <div className="bg">
         <span className="blob b1" />
         <span className="blob b2" />
         <span className="blob b3" />
       </div>
 
-      {/* Visual Canvas (Sun, Moon, Stars, Clouds, Rain, Fog, Spectrum Analyzer) */}
+      {/* Living Visual Canvas */}
       <VisualCanvas
         engine={engine}
         weather={effectiveWeather}
         weatherMuted={weatherMuted}
         zonedDate={zonedDate}
         theme={theme}
+        settlement={settlement}
         onBassLevelChange={setBassLevel}
       />
 
-      <main>
-        {/* Top Header with Clock, Date, Mood, and Collapsible Cards Drawer */}
+      {/* Main Content */}
+      <main className={zenMode ? 'zen-active' : ''}>
         <Header
           zonedDate={zonedDate}
           station={currentStation}
           placeName={placeName}
           isGps={isGps}
           weather={effectiveWeather}
+          settlement={settlement}
           prefWeather={prefWeather}
           prefWind={prefWind}
           prefInstrument={prefInstrument}
           recentLocations={recentLocations}
+          zenMode={zenMode}
+          onToggleZenMode={() => setZenMode((v) => !v)}
           onSelectGps={handleSelectGps}
           onSelectCity={handleSelectCity}
           onSelectWeather={handleSelectWeather}
           onSelectWind={handleSelectWind}
           onSelectInstrument={handleSelectInstrument}
+          onSelectSettlement={handleSelectSettlement}
         />
 
-        {/* Now Playing Card with Vinyl, Title, BPM Popover, Key Shuffle, Weather Mute */}
         <NowPlaying
           track={currentTrack}
           station={currentStation}
@@ -517,16 +541,22 @@ export const App: React.FC = () => {
           onToggleWeatherMute={handleToggleWeatherMute}
         />
 
-        {/* Stations Grid */}
         <StationsGrid
           currentStation={currentStation}
           playing={playing}
           onSelectStation={handleSelectStation}
         />
 
-        {/* Minimalist Bottom Toast Pill */}
         <Toast message={toastMessage} />
       </main>
+
+      {/* Zen Mode Overlay - minimal clock + song name when UI hidden */}
+      {zenMode && (
+        <div className="zen-overlay" onClick={() => setZenMode(false)}>
+          <div className="zen-clock">{currentTrack?.title || 'Streaming…'}</div>
+          <div className="zen-hint">Click anywhere or press Z to exit</div>
+        </div>
+      )}
     </>
   );
 };
