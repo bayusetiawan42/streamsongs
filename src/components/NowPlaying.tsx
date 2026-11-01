@@ -6,7 +6,6 @@ interface NowPlayingProps {
   track: Track | null;
   station: Station;
   playing: boolean;
-  bassLevel: number;
   weather: WeatherData;
   weatherMuted: boolean;
   prefBpm: 'default' | number;
@@ -39,7 +38,6 @@ export const NowPlaying: React.FC<NowPlayingProps> = ({
   track,
   station,
   playing,
-  bassLevel,
   weather,
   weatherMuted,
   prefBpm,
@@ -161,12 +159,8 @@ export const NowPlaying: React.FC<NowPlayingProps> = ({
   return (
     <div className="card">
       <div className="now">
-        {/* Vinyl Disc with Bass Pulsing */}
-        <div
-          className="art"
-          id="art"
-          style={{ transform: `scale(${1 + bassLevel * 0.08})` }}
-        >
+        {/* Vinyl Disc with Direct CSS Variable Bass Pulsing (Zero React re-render) */}
+        <div className="art" id="art">
           <div className="disc" />
         </div>
 

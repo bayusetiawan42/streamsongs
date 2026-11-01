@@ -58,7 +58,6 @@ export const App: React.FC = () => {
   const [stationIndex, setStationIndex] = useState(0);
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [volume, setVolume] = useState(0.85);
-  const [bassLevel, setBassLevel] = useState(0);
 
   // Zen Mode
   const [zenMode, setZenMode] = useState(false);
@@ -495,7 +494,6 @@ export const App: React.FC = () => {
         zonedDate={zonedDate}
         theme={theme}
         settlement={settlement}
-        onBassLevelChange={setBassLevel}
       />
 
       {/* Main Content */}
@@ -525,7 +523,6 @@ export const App: React.FC = () => {
           track={currentTrack}
           station={currentStation}
           playing={playing}
-          bassLevel={bassLevel}
           weather={effectiveWeather}
           weatherMuted={weatherMuted}
           prefBpm={prefBpm}
