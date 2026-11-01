@@ -84,6 +84,12 @@ const STATION_PALETTES: Record<string, { hueShift: number; satMul: number; litMu
     litMul: 1.1,
     accOverride: [155, 90, 62],
   },
+  interstellar: {
+    hueShift: -25,      // Deep cosmic space & golden accretion glow
+    satMul: 1.15,
+    litMul: 0.88,
+    accOverride: [42, 95, 62],
+  },
   auto: {
     hueShift: 0,
     satMul: 1.0,

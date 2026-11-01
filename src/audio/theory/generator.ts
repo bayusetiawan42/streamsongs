@@ -117,6 +117,24 @@ export const STATIONS: Station[] = [
     preferredInstrument: 'chiptune',
     a: ['Pixel', 'Boss', 'Turbo', 'Level', 'Retro', 'Bonus', 'Arcade', 'Hyper', 'Bit'],
     b: ['Quest', 'Rush', 'Stage', 'Combo', 'Arena', 'Warp', 'Castle', 'Galaxy', 'Hero']
+  },
+  {
+    id: 'interstellar',
+    name: 'Interstellar',
+    icon: 'fa-shuttle-space',
+    desc: 'Cathedral organ, Zimmer ostinatos & epic cosmic crescendo',
+    h: 215,
+    sc: ['dorian', 'minor', 'lydian'],
+    bpm: [78, 92],
+    w: ['sawtooth', 'sine'],
+    dr: 1,
+    den: 0.65,
+    cut: 2400,
+    wet: 1.85,
+    pulse: 1,
+    preferredInstrument: 'organ',
+    a: ['Gargantua', 'Cornfield', 'Day One', 'Event', 'Endless', 'Cosmic', 'Solar', 'Infinity', 'Stellar', 'Gravitational'],
+    b: ['Horizon', 'Chase', 'Wormhole', 'Tears', 'Singularity', 'Orbit', 'Ascent', 'Echoes', 'Drift', 'Tides']
   }
 ];
 
@@ -414,7 +432,12 @@ export function generateTrack(
       const isDownbeat = s % 4 === 0;
       const isSyncopated = s % 2 === 1;
 
-      if (isDownbeat) {
+      if (station.id === 'interstellar') {
+        // Hans Zimmer climbing 16th-note arpeggiated ostinato (Cornfield Chase / Day One)
+        const ostinato = [0, 2, 4, 7, 4, 2, 0, 2, 4, 7, 9, 7, 4, 2, 4, 2];
+        const stepDeg = ostinato[s % ostinato.length];
+        n = rootChordNote + stepDeg;
+      } else if (isDownbeat) {
         // Strong resolution to chord tone
         n = r() < 0.85 ? rootChordNote + pick([0, 2, 4]) : null;
       } else if (isSyncopated && r() < den * 0.7) {

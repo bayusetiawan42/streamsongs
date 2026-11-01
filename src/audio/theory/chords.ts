@@ -53,6 +53,12 @@ export const GENRE_PROGRESSIONS: Record<string, number[][]> = {
     [3, 0, 3, 4], // IV - I - IV - V
     [0, 5, 3, 4], // i - VI - iv - V
     [0, 2, 5, 4]  // i - III - VI - V
+  ],
+  interstellar: [
+    [0, 5, 2, 6], // i - VI - III - VII (Zimmer cinematic ascent)
+    [0, 3, 5, 4], // i - iv - VI - v (soaring space crescendo)
+    [5, 0, 3, 4], // VI - i - iv - v (gravitational pull)
+    [0, 2, 3, 4]  // i - III - iv - v (epic modal climb)
   ]
 };
 

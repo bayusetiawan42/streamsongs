@@ -54,6 +54,9 @@ export class VoiceManager {
       case 'chiptune':
         this.playChiptune(freq, time, duration, velocity, cutoff, wetSend, dryBus);
         break;
+      case 'organ':
+        this.playPipeOrgan(freq, time, duration, velocity, cutoff, wetSend, dryBus);
+        break;
       default:
         this.playRhodes(freq, time, duration, velocity, cutoff, wetSend, dryBus);
     }
@@ -377,6 +380,59 @@ export class VoiceManager {
 
     osc.start(t);
     osc.stop(t + dur + 0.08);
+  }
+
+  // 8. Cathedral Pipe Organ (Hans Zimmer / Interstellar Style)
+  private playPipeOrgan(
+    f: number, t: number, dur: number, vel: number, cut: number,
+    wet: GainNode, dry: GainNode
+  ) {
+    const c = this.ctx;
+    // 3 Pipe Ranks: 8' (sawtooth fundamental), 4' (octave sine), and 2 2/3' (Nazard fifth triangle)
+    const rank1 = c.createOscillator();
+    const rank2 = c.createOscillator();
+    const rank3 = c.createOscillator();
+    const filter = c.createBiquadFilter();
+    const env = c.createGain();
+
+    rank1.type = 'sawtooth';
+    rank1.frequency.setValueAtTime(f, t);
+
+    rank2.type = 'sine';
+    rank2.frequency.setValueAtTime(f * 2, t);
+
+    rank3.type = 'triangle';
+    rank3.frequency.setValueAtTime(f * 3, t);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(Math.min(cut * 1.5, 4200), t);
+    filter.Q.value = 1.0;
+
+    const gainVal = 0.06 * vel;
+    env.gain.setValueAtTime(0.0001, t);
+    // Church organ wind-chest attack swell
+    env.gain.linearRampToValueAtTime(gainVal, t + 0.035);
+    env.gain.setValueAtTime(gainVal * 0.9, t + dur);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.55);
+
+    rank1.connect(filter);
+    rank2.connect(filter);
+    rank3.connect(filter);
+    filter.connect(env);
+    env.connect(dry);
+
+    // Deep cathedral space reverb
+    const wetTap = c.createGain();
+    wetTap.gain.value = 0.88;
+    env.connect(wetTap);
+    wetTap.connect(wet);
+
+    rank1.start(t);
+    rank2.start(t);
+    rank3.start(t);
+    rank1.stop(t + dur + 0.6);
+    rank2.stop(t + dur + 0.6);
+    rank3.stop(t + dur + 0.6);
   }
 
   /**
@@ -707,6 +763,46 @@ export class VoiceManager {
         break;
       }
 
+      // 8. Cathedral Pipe Organ: Majestic Multi-Rank Choir Bed
+      case 'organ': {
+        const o1 = c.createOscillator();
+        const o2 = c.createOscillator();
+        const filter = c.createBiquadFilter();
+        const env = c.createGain();
+
+        o1.type = 'sawtooth';
+        o1.frequency.setValueAtTime(freq, t);
+
+        o2.type = 'sine';
+        o2.frequency.setValueAtTime(freq * 2, t);
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(Math.min(cutoff * 1.3, 3600), t);
+
+        env.gain.setValueAtTime(0.0001, t);
+        env.gain.linearRampToValueAtTime(baseGain * 1.25, t + 0.35);
+        env.gain.setValueAtTime(baseGain * 1.25, hold);
+        env.gain.exponentialRampToValueAtTime(0.0001, hold + 1.6);
+
+        o1.connect(filter);
+        o2.connect(filter);
+        filter.connect(env);
+        env.connect(dryBus);
+
+        if (wetAmt > 0) {
+          const s = c.createGain();
+          s.gain.value = wetAmt * 0.9;
+          env.connect(s);
+          s.connect(wetSend);
+        }
+
+        o1.start(t);
+        o2.start(t);
+        o1.stop(hold + 1.8);
+        o2.stop(hold + 1.8);
+        break;
+      }
+
       // Fallback
       default: {
         const osc = c.createOscillator();
@@ -872,6 +968,22 @@ export class VoiceManager {
         env.gain.linearRampToValueAtTime(gain, t + 0.008);
         env.gain.setValueAtTime(gain, t + Math.max(0.05, dur * 0.7));
         env.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.12);
+        break;
+      }
+
+      // 8. Pipe Organ: Deep 32-Foot Pedal Bourdon Sub Bass
+      case 'organ': {
+        osc.type = isPulse ? 'sawtooth' : 'triangle';
+        osc.frequency.setValueAtTime(freq, t);
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(260, t);
+
+        const gain = isPulse ? 0.28 : 0.36;
+        env.gain.setValueAtTime(0.0001, t);
+        env.gain.linearRampToValueAtTime(gain, t + 0.04);
+        env.gain.setValueAtTime(gain * 0.9, t + Math.max(0.1, dur * 0.8));
+        env.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.4);
         break;
       }
 

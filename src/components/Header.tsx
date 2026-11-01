@@ -44,6 +44,7 @@ const INSTRUMENT_OPTIONS: { id: InstrumentId; name: string; icon: string; desc: 
   { id: 'harp', name: 'Acoustic Harp', icon: 'fa-music', desc: 'Plucked nylon and acoustic strings' },
   { id: 'synthwave', name: 'Synthwave Lead', icon: 'fa-bolt', desc: 'Punchy 80s detuned saw lead' },
   { id: 'chiptune', name: '8-Bit Chiptune', icon: 'fa-gamepad', desc: 'Classic retro square waves' },
+  { id: 'organ', name: 'Pipe Organ', icon: 'fa-church', desc: 'Cathedral pipe organ with majestic acoustic resonance' },
 ];
 
 export const Header: React.FC<HeaderProps> = ({
